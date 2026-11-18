@@ -1,0 +1,15 @@
+{
+  "name": "hardware-analyzer-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2026-01-01",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hardware-bot-db",
+      "database_id": "ВСТАВЬ_СЮДА_ID_ТВОЕЙ_БАЗЫ_D1"
+    }
+  ]
+}
