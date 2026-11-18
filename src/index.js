@@ -406,7 +406,8 @@ async function processHardwareAnalysis(message, user, env) {
 // ==========================================
 async function callAIWithFallback(env, userPromptText, imageInfo) {
   const errors = [];
-  const fullSystemPrompt = `${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
+  const today = new Date().toISOString().slice(0, 10); // например: 2027-04-15
+  const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
 
   // 1. Пробуем бесплатные модели Gemini по очереди
   if (env.GEMINI_API_KEY) {
