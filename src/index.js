@@ -378,7 +378,7 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const fullAnswer = `${aiResponse}\n\n💳 <i>Осталось проверок: ${remainingCredits}</i>`;
+    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
     const helpKeyboard = getAdminContactInlineKeyboard(env, '🤝 Заказать личный подбор');
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
