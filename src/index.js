@@ -1,11 +1,15 @@
 import { SYSTEM_PROMPT } from './prompts.js';
 import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
-const GEMINI_MODEL = 'gemini-3.8-flash';
+// Список бесплатных моделей Gemini по приоритету (сначала с самыми большими лимитами)
+const GEMINI_MODELS = [
+  'gemini-3.5-flash-lite', // ~500 бесплатных запросов в день
+  'gemini-3.1-flash-lite', // Запасная бесплатная лёгкая модель
+  'gemini-3.8-flash',      // Самая умная, но на бесплатном тарифе лимит ~20/день
+];
 
 export default {
   async fetch(request, env, ctx) {
-    // На обычный GET-запрос (например, при открытии URL воркера в браузере) отвечаем статусом
     if (request.method === 'GET') {
       return new Response('Hardware Analyzer Bot is running on Cloudflare Workers!', {
         status: 200,
@@ -18,8 +22,6 @@ export default {
 
     try {
       const update = await request.json();
-      // Немедленно отдаём обработку в фон и сразу возвращаем Telegram 200 OK,
-      // чтобы Telegram не слал дубли сообщений при долгом ответе Gemini.
       ctx.waitUntil(
         handleUpdate(update, env).catch((err) => {
           console.error('Unhandled error in handleUpdate:', err);
@@ -95,10 +97,9 @@ async function handleMessage(message, env) {
     return;
   }
 
-  // Гарантируем, что пользователь есть в базе, даже если он не нажимал /start
   await ensureUserExists(env.DB, userId);
 
-  // --- 3. Кнопки главного меню (работают с любого шага) ---
+  // --- 3. Кнопки главного меню ---
   if (text === '💳 Мои проверки') {
     await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
     const user = await getUser(env.DB, userId);
@@ -208,7 +209,6 @@ async function handleMessage(message, env) {
     return;
   }
 
-  // Если step === 'idle' и пользователь прислал произвольный текст/фото
   await sendTelegramMessage(
     env.BOT_TOKEN,
     chatId,
@@ -221,7 +221,7 @@ async function handleMessage(message, env) {
 }
 
 // ==========================================
-// ОБРАБОТКА INLINE-КНОПОК (CALLBACK QUERY)
+// ОБРАБОТКА INLINE-КНОПОК
 // ==========================================
 async function handleCallbackQuery(callbackQuery, env) {
   const callbackId = callbackQuery.id;
@@ -292,7 +292,7 @@ async function handleCallbackQuery(callbackQuery, env) {
 }
 
 // ==========================================
-// АНАЛИЗ ЖЕЛЕЗА ЧЕРЕЗ GEMINI REST API
+// АНАЛИЗ ЖЕЛЕЗА (GEMINI + ЗАПАСНЫЕ GROQ / GROK)
 // ==========================================
 async function processHardwareAnalysis(message, user, env) {
   const chatId = message.chat.id;
@@ -326,7 +326,6 @@ async function processHardwareAnalysis(message, user, env) {
     return;
   }
 
-  // Показываем статус "печатает..." и временное сообщение
   await sendChatAction(env.BOT_TOKEN, chatId, 'typing');
   const statusMsg = await sendTelegramMessage(
     env.BOT_TOKEN,
@@ -335,26 +334,18 @@ async function processHardwareAnalysis(message, user, env) {
   );
 
   try {
-    let imagePart = null;
+    let imageInfo = null;
 
     if (hasPhoto) {
-      // Берём последнее сжатое фото, если оно <= 500 КБ; иначе предпоследнее, чтобы не упереться в 10ms CPU
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
         message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 500000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
-      const downloaded = await downloadTelegramPhotoAsBase64(env.BOT_TOKEN, chosenPhoto.file_id);
-      imagePart = {
-        inlineData: {
-          mimeType: downloaded.mimeType,
-          data: downloaded.base64,
-        },
-      };
+      imageInfo = await downloadTelegramPhotoAsBase64(env.BOT_TOKEN, chosenPhoto.file_id);
     }
 
-    // Опциональный быстрый поиск (не критичный, при любой ошибке/блокировке игнорируется)
     const webHint = !hasPhoto && textInput ? await optionalWebLookup(textInput) : '';
 
     const userPromptText =
@@ -365,14 +356,9 @@ async function processHardwareAnalysis(message, user, env) {
         : 'Пользователь прислал скриншот без текстового описания. Изучи изображение.\n\n') +
       (webHint ? `Дополнительная справка из сети:\n${webHint}\n` : '');
 
-    const parts = [{ text: userPromptText }];
-    if (imagePart) {
-      parts.push(imagePart);
-    }
+    // Вызываем нейросеть с автоматическим переключением на запасные варианты
+    const aiResponse = await callAIWithFallback(env, userPromptText, imageInfo);
 
-    const aiResponse = await callGeminiAPI(env.GEMINI_API_KEY, parts);
-
-    // Списываем 1 проверку и сбрасываем шаг ТОЛЬКО после успешного ответа Gemini
     await env.DB.prepare(
       `UPDATE users
        SET credits = MAX(credits - 1, 0),
@@ -403,29 +389,101 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
+    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 180));
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
-      '⚠️ Не удалось завершить анализ (временная ошибка нейросети или загрузки изображения).\n' +
-        'Ваша проверка <b>не списана</b>. Попробуйте ещё раз чуть позже.',
+      '⚠️ Не удалось завершить анализ.\n' +
+        'Ваша проверка <b>не списана</b>. Попробуйте ещё раз чуть позже.\n\n' +
+        `<i>Техническая причина: ${safeReason}</i>`,
       { parse_mode: 'HTML' }
     );
   }
 }
 
 // ==========================================
-// GEMINI REST API & ОПЦИОНАЛЬНЫЙ ПОИСК
+// ЦЕПОЧКА НЕЙРОСЕТЕЙ: GEMINI -> GROQ -> GROK
 // ==========================================
-async function callGeminiAPI(apiKey, userParts) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+async function callAIWithFallback(env, userPromptText, imageInfo) {
+  const errors = [];
+  const fullSystemPrompt = `${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
+
+  // 1. Пробуем бесплатные модели Gemini по очереди
+  if (env.GEMINI_API_KEY) {
+    for (const model of GEMINI_MODELS) {
+      try {
+        return await callGeminiSingleModel(
+          env.GEMINI_API_KEY,
+          model,
+          fullSystemPrompt,
+          userPromptText,
+          imageInfo
+        );
+      } catch (err) {
+        console.warn(`Gemini (${model}) failed:`, err.message);
+        errors.push(`${model}: ${err.message}`);
+      }
+    }
+  } else {
+    errors.push('GEMINI_API_KEY не задан в Cloudflare');
+  }
+
+  // 2. Запасной вариант 1: Бесплатный Groq (console.groq.com)
+  if (env.GROQ_API_KEY) {
+    try {
+      // qwen/qwen3.8-27b умеет читать скриншоты; openai/gpt-oss-120b — мощный текстовый анализ
+      const groqModel = imageInfo ? 'qwen/qwen3.8-27b' : 'openai/gpt-oss-120b';
+      return await callOpenAICompatibleAPI(
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        groqModel,
+        fullSystemPrompt,
+        userPromptText,
+        imageInfo
+      );
+    } catch (err) {
+      console.warn('Groq failed:', err.message);
+      errors.push(`Groq: ${err.message}`);
+    }
+  }
+
+  // 3. Запасной вариант 2: xAI Grok (console.x.ai)
+  const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
+  if (grokKey) {
+    try {
+      return await callOpenAICompatibleAPI(
+        'https://api.x.ai/v1/chat/completions',
+        grokKey,
+        'grok-4.7',
+        fullSystemPrompt,
+        userPromptText,
+        imageInfo
+      );
+    } catch (err) {
+      console.warn('xAI Grok failed:', err.message);
+      errors.push(`Grok: ${err.message}`);
+    }
+  }
+
+  throw new Error(errors.join(' | '));
+}
+
+async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, imageInfo) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const userParts = [{ text: userPromptText }];
+  if (imageInfo) {
+    userParts.push({
+      inlineData: {
+        mimeType: imageInfo.mimeType,
+        data: imageInfo.base64,
+      },
+    });
+  }
 
   const payload = {
     systemInstruction: {
-      parts: [
-        {
-          text: `${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`,
-        },
-      ],
+      parts: [{ text: systemText }],
     },
     contents: [
       {
@@ -445,8 +503,15 @@ async function callGeminiAPI(apiKey, userParts) {
   });
 
   if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Gemini HTTP ${response.status}: ${errText}`);
+    const errBody = await response.text();
+    let shortMsg = errBody;
+    try {
+      const parsed = JSON.parse(errBody);
+      shortMsg = parsed?.error?.message || errBody;
+    } catch {
+      // Оставляем как есть
+    }
+    throw new Error(`HTTP ${response.status} (${shortMsg.slice(0, 100)})`);
   }
 
   const data = await response.json();
@@ -456,14 +521,65 @@ async function callGeminiAPI(apiKey, userParts) {
     .trim();
 
   if (!text) {
-    throw new Error('Gemini returned empty response');
+    throw new Error('Пустой ответ модели');
+  }
+
+  return text;
+}
+
+async function callOpenAICompatibleAPI(
+  endpointUrl,
+  apiKey,
+  model,
+  systemText,
+  userPromptText,
+  imageInfo
+) {
+  const userContent = imageInfo
+    ? [
+        { type: 'text', text: userPromptText },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:${imageInfo.mimeType};base64,${imageInfo.base64}`,
+          },
+        },
+      ]
+    : userPromptText;
+
+  const payload = {
+    model,
+    messages: [
+      { role: 'system', content: systemText },
+      { role: 'user', content: userContent },
+    ],
+    temperature: 0.4,
+  };
+
+  const response = await fetch(endpointUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 100)})`);
+  }
+
+  const data = await response.json();
+  const text = (data?.choices?.[0]?.message?.content || '').trim();
+  if (!text) {
+    throw new Error('Пустой ответ модели');
   }
 
   return text;
 }
 
 async function optionalWebLookup(queryText) {
-  // Аккуратный необязательный JSON-запрос с коротким таймаутом (без парсинга HTML)
   try {
     const cleanQuery = queryText.split('\n')[0].slice(0, 80).trim();
     if (!cleanQuery) return '';
@@ -479,7 +595,6 @@ async function optionalWebLookup(queryText) {
     const abstract = (json.AbstractText || '').trim();
     return abstract ? abstract.slice(0, 500) : '';
   } catch {
-    // При таймауте, капче или сетевой ошибке тихо продолжаем без поиска
     return '';
   }
 }
@@ -494,19 +609,18 @@ async function downloadTelegramPhotoAsBase64(botToken, fileId) {
   const fileInfo = await fileInfoRes.json();
 
   if (!fileInfo.ok || !fileInfo.result?.file_path) {
-    throw new Error('Failed to get file path from Telegram');
+    throw new Error('Не удалось получить путь к фото от Telegram');
   }
 
   const filePath = fileInfo.result.file_path;
   const fileRes = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`);
   if (!fileRes.ok) {
-    throw new Error(`Failed to download file: HTTP ${fileRes.status}`);
+    throw new Error(`Ошибка скачивания фото: HTTP ${fileRes.status}`);
   }
 
   const arrayBuffer = await fileRes.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
 
-  // Побайтовый цикл: гарантированно не вызывает переполнение стека (RangeError)
   let binary = '';
   const len = bytes.byteLength;
   for (let i = 0; i < len; i++) {
@@ -562,7 +676,6 @@ async function handleAdminAdd(chatId, text, env) {
     { parse_mode: 'HTML' }
   );
 
-  // Отправляем уведомление пользователю в личку
   const notifyRes = await sendTelegramMessage(
     env.BOT_TOKEN,
     targetUserId,
@@ -573,7 +686,7 @@ async function handleAdminAdd(chatId, text, env) {
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
-      `⚠️ Проверки начислены, но уведомить пользователя не удалось (возможно, он не запускал бота).`
+      `⚠️ Проверки начислены, но уведомить пользователя не удалось.`
     );
   }
 }
@@ -592,7 +705,7 @@ async function handleAdminStats(chatId, env) {
     `📊 <b>Статистика бота</b>\n\n` +
       `👥 Пользователей в D1: <b>${totalUsers}</b>\n` +
       `🔍 Проведено проверок: <b>${allChecks}</b>\n` +
-      `🤖 Модель: <code>${GEMINI_MODEL}</code>`,
+      `🤖 Основная модель: <code>${GEMINI_MODELS[0]}</code>`,
     { parse_mode: 'HTML' }
   );
 }
@@ -680,13 +793,9 @@ function escapeHtml(str) {
 
 function formatMarkdownToSafeHtml(text) {
   let safe = escapeHtml(text);
-  // Заголовки ### Заголовок -> <b>Заголовок</b>
   safe = safe.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
-  // Жирный текст **текст** -> <b>текст</b>
   safe = safe.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>');
-  // Инлайн-код `текст` -> <code>текст</code>
   safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Маркеры списка * пункт -> • пункт
   safe = safe.replace(/^\*\s+/gm, '• ');
   return safe;
 }
@@ -737,7 +846,6 @@ async function sendLongFormattedResponse(botToken, chatId, rawText, lastReplyMar
       reply_markup: replyMarkup,
     });
 
-    // Если разметка HTML всё же не прошла валидацию Telegram — отправляем обычным текстом
     if (!res.ok) {
       await sendTelegramMessage(botToken, chatId, chunks[i], {
         reply_markup: replyMarkup,
@@ -791,7 +899,7 @@ async function deleteTelegramMessage(botToken, chatId, messageId) {
       body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
     });
   } catch {
-    // Не критично, если не удалось удалить статусное сообщение
+    // Игнорируем
   }
 }
 
@@ -803,7 +911,7 @@ async function sendChatAction(botToken, chatId, action) {
       body: JSON.stringify({ chat_id: chatId, action }),
     });
   } catch {
-    // Игнорируем сбой индикатора typing
+    // Игнорируем
   }
 }
 
