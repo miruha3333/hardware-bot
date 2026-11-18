@@ -55,7 +55,7 @@ async function handleMessage(message, env) {
   if (!userId) return;
 
   const text = (message.text || '').trim();
-
+  console.log('Incoming message from:', userId, 'text:', text);
   // --- 1. Админ-команды ---
   if (String(userId) === String(env.ADMIN_ID)) {
     if (text.startsWith('/add')) {
@@ -865,7 +865,11 @@ async function sendTelegramMessage(botToken, chatId, text, extra = {}) {
         ...extra,
       }),
     });
-    return await res.json();
+    const data = await res.json();
+if (!data.ok) {
+  console.error('Telegram API error:', JSON.stringify(data));
+}
+return data;
   } catch (err) {
     console.error('sendTelegramMessage error:', err);
     return { ok: false };
