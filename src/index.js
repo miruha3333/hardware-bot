@@ -3,9 +3,9 @@ import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
 // Список бесплатных моделей Gemini по приоритету (сначала с самыми большими лимитами)
 const GEMINI_MODELS = [
-  'gemini-3.5-flash-lite', // ~500 бесплатных запросов в день
-  'gemini-3.1-flash-lite', // Запасная бесплатная лёгкая модель
-  'gemini-3.8-flash',      // Самая умная, но на бесплатном тарифе лимит ~20/день
+  'gemini-3.5-flash-lite', // Быстрая модель с большими лимитами
+  'gemini-3.1-flash-lite', // Запасная лёгкая модель
+  'gemini-3.8-flash',      // Самая умная, но строже лимиты на бесплатном тарифе
 ];
 
 export default {
@@ -56,6 +56,7 @@ async function handleMessage(message, env) {
 
   const text = (message.text || '').trim();
   console.log('Incoming message from:', userId, 'text:', text);
+
   // --- 1. Админ-команды ---
   if (String(userId) === String(env.ADMIN_ID)) {
     if (text.startsWith('/add')) {
@@ -333,13 +334,16 @@ async function processHardwareAnalysis(message, user, env) {
     '⏳ Анализирую характеристики и проверяю скрытые подвохи...'
   );
 
+  // Оставляем запас от 30-секундного лимита ctx.waitUntil в Cloudflare
+  const deadline = Date.now() + 22000;
+
   try {
     let imageInfo = null;
 
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 500000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 250000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
@@ -356,8 +360,7 @@ async function processHardwareAnalysis(message, user, env) {
         : 'Пользователь прислал скриншот без текстового описания. Изучи изображение.\n\n') +
       (webHint ? `Дополнительная справка из сети:\n${webHint}\n` : '');
 
-    // Вызываем нейросеть с автоматическим переключением на запасные варианты
-    const aiResponse = await callAIWithFallback(env, userPromptText, imageInfo);
+    const aiResponse = await callAIWithFallback(env, userPromptText, imageInfo, deadline);
 
     await env.DB.prepare(
       `UPDATE users
@@ -389,7 +392,7 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 180));
+    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 220));
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
@@ -404,21 +407,29 @@ async function processHardwareAnalysis(message, user, env) {
 // ==========================================
 // ЦЕПОЧКА НЕЙРОСЕТЕЙ: GEMINI -> GROQ -> GROK
 // ==========================================
-async function callAIWithFallback(env, userPromptText, imageInfo) {
+async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const errors = [];
-  const today = new Date().toISOString().slice(0, 10); // например: 2027-04-15
+  const today = new Date().toISOString().slice(0, 10);
   const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
 
-  // 1. Пробуем бесплатные модели Gemini по очереди
+  const getTimeoutMs = () => Math.max(3000, Math.min(11000, deadline - Date.now()));
+
+  // 1. Пробуем модели Gemini по очереди
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
+      if (Date.now() > deadline - 1500) {
+        errors.push('Время ожидания истекло');
+        break;
+      }
       try {
         return await callGeminiSingleModel(
           env.GEMINI_API_KEY,
           model,
           fullSystemPrompt,
           userPromptText,
-          imageInfo
+          imageInfo,
+          getTimeoutMs(),
+          env.ENABLE_GOOGLE_SEARCH === 'true'
         );
       } catch (err) {
         console.warn(`Gemini (${model}) failed:`, err.message);
@@ -430,9 +441,8 @@ async function callAIWithFallback(env, userPromptText, imageInfo) {
   }
 
   // 2. Запасной вариант 1: Бесплатный Groq (console.groq.com)
-  if (env.GROQ_API_KEY) {
+  if (env.GROQ_API_KEY && Date.now() < deadline - 1500) {
     try {
-      // qwen/qwen3.8-27b умеет читать скриншоты; openai/gpt-oss-120b — мощный текстовый анализ
       const groqModel = imageInfo ? 'qwen/qwen3.8-27b' : 'openai/gpt-oss-120b';
       return await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
@@ -440,7 +450,8 @@ async function callAIWithFallback(env, userPromptText, imageInfo) {
         groqModel,
         fullSystemPrompt,
         userPromptText,
-        imageInfo
+        imageInfo,
+        getTimeoutMs()
       );
     } catch (err) {
       console.warn('Groq failed:', err.message);
@@ -450,7 +461,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo) {
 
   // 3. Запасной вариант 2: xAI Grok (console.x.ai)
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
-  if (grokKey) {
+  if (grokKey && Date.now() < deadline - 1500) {
     try {
       return await callOpenAICompatibleAPI(
         'https://api.x.ai/v1/chat/completions',
@@ -458,7 +469,8 @@ async function callAIWithFallback(env, userPromptText, imageInfo) {
         'grok-4.7',
         fullSystemPrompt,
         userPromptText,
-        imageInfo
+        imageInfo,
+        getTimeoutMs()
       );
     } catch (err) {
       console.warn('xAI Grok failed:', err.message);
@@ -469,7 +481,15 @@ async function callAIWithFallback(env, userPromptText, imageInfo) {
   throw new Error(errors.join(' | '));
 }
 
-async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, imageInfo) {
+async function callGeminiSingleModel(
+  apiKey,
+  model,
+  systemText,
+  userPromptText,
+  imageInfo,
+  timeoutMs,
+  useSearch
+) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const userParts = [{ text: userPromptText }];
@@ -482,7 +502,7 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     });
   }
 
-  const basePayload = {
+  const payload = {
     systemInstruction: {
       parts: [{ text: systemText }],
     },
@@ -497,24 +517,25 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     },
   };
 
-  // Пробуем запрос с реальным поиском Google (проверка артикулов, цен и болячек модели)
+  if (useSearch) {
+    payload.tools = [{ google_search: {} }];
+  }
+
   let response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...basePayload,
-      tools: [{ google_search: {} }],
-    }),
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
-  // Если поиск Google недоступен на текущем тарифе/квоте — тихо повторяем обычный запрос
-  if (!response.ok && response.status !== 401) {
-    const firstErr = await response.clone().text();
-    console.warn(`Gemini (${model}) google_search fallback (${response.status}):`, firstErr.slice(0, 120));
+  // Если был включён поиск Google, но квота/тариф не пустил — повторяем без поиска
+  if (useSearch && !response.ok && response.status !== 401) {
+    delete payload.tools;
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(basePayload),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(Math.min(timeoutMs, 8000)),
     });
   }
 
@@ -549,7 +570,8 @@ async function callOpenAICompatibleAPI(
   model,
   systemText,
   userPromptText,
-  imageInfo
+  imageInfo,
+  timeoutMs
 ) {
   const userContent = imageInfo
     ? [
@@ -579,6 +601,7 @@ async function callOpenAICompatibleAPI(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -603,7 +626,7 @@ async function optionalWebLookup(queryText) {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`;
     const res = await fetch(url, {
       headers: { 'User-Agent': 'HardwareAnalyzerBot/1.0' },
-      signal: AbortSignal.timeout(2500),
+      signal: AbortSignal.timeout(2000),
     });
 
     if (!res.ok) return '';
@@ -616,11 +639,12 @@ async function optionalWebLookup(queryText) {
 }
 
 // ==========================================
-// СКАЧИВАНИЕ ФОТО И БЕЗОПАСНЫЙ BASE64
+// СКАЧИВАНИЕ ФОТО И СВЕРХБЫСТРЫЙ BASE64
 // ==========================================
 async function downloadTelegramPhotoAsBase64(botToken, fileId) {
   const fileInfoRes = await fetch(
-    `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`
+    `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    { signal: AbortSignal.timeout(4000) }
   );
   const fileInfo = await fileInfoRes.json();
 
@@ -629,7 +653,9 @@ async function downloadTelegramPhotoAsBase64(botToken, fileId) {
   }
 
   const filePath = fileInfo.result.file_path;
-  const fileRes = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`);
+  const fileRes = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`, {
+    signal: AbortSignal.timeout(5000),
+  });
   if (!fileRes.ok) {
     throw new Error(`Ошибка скачивания фото: HTTP ${fileRes.status}`);
   }
@@ -637,12 +663,17 @@ async function downloadTelegramPhotoAsBase64(botToken, fileId) {
   const arrayBuffer = await fileRes.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
 
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  let base64;
+  if (typeof bytes.toBase64 === 'function') {
+    base64 = bytes.toBase64();
+  } else {
+    let binary = '';
+    const chunkSize = 0x4000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    base64 = btoa(binary);
   }
-  const base64 = btoa(binary);
 
   const lowerPath = filePath.toLowerCase();
   const mimeType = lowerPath.endsWith('.png')
@@ -882,10 +913,10 @@ async function sendTelegramMessage(botToken, chatId, text, extra = {}) {
       }),
     });
     const data = await res.json();
-if (!data.ok) {
-  console.error('Telegram API error:', JSON.stringify(data));
-}
-return data;
+    if (!data.ok) {
+      console.error('Telegram API error:', JSON.stringify(data));
+    }
+    return data;
   } catch (err) {
     console.error('sendTelegramMessage error:', err);
     return { ok: false };
