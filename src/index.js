@@ -482,7 +482,7 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     });
   }
 
-  const payload = {
+  const basePayload = {
     systemInstruction: {
       parts: [{ text: systemText }],
     },
@@ -493,15 +493,30 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
       },
     ],
     generationConfig: {
-      temperature: 0.4,
+      temperature: 0.3,
     },
   };
 
-  const response = await fetch(url, {
+  // Пробуем запрос с реальным поиском Google (проверка артикулов, цен и болячек модели)
+  let response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...basePayload,
+      tools: [{ google_search: {} }],
+    }),
   });
+
+  // Если поиск Google недоступен на текущем тарифе/квоте — тихо повторяем обычный запрос
+  if (!response.ok && response.status !== 401) {
+    const firstErr = await response.clone().text();
+    console.warn(`Gemini (${model}) google_search fallback (${response.status}):`, firstErr.slice(0, 120));
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(basePayload),
+    });
+  }
 
   if (!response.ok) {
     const errBody = await response.text();
