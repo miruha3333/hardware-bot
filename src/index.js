@@ -1,11 +1,11 @@
 import { SYSTEM_PROMPT } from './prompts.js';
 import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
-// Список бесплатных моделей Gemini по приоритету (сначала с самыми большими лимитами)
+// Список моделей Gemini по приоритету (быстрые с наибольшими бесплатными лимитами)
 const GEMINI_MODELS = [
-  'gemini-3.5-flash-lite', // Быстрая модель с большими лимитами
-  'gemini-3.1-flash-lite', // Запасная лёгкая модель
-  'gemini-3.8-flash',      // Самая умная, но строже лимиты на бесплатном тарифе
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
 ];
 
 export default {
@@ -334,8 +334,8 @@ async function processHardwareAnalysis(message, user, env) {
     '⏳ Анализирую характеристики и проверяю скрытые подвохи...'
   );
 
-  // Оставляем запас от 30-секундного лимита ctx.waitUntil в Cloudflare
-  const deadline = Date.now() + 22000;
+  // Общий потолок 26 сек (запас от 30-секундного лимита Cloudflare ctx.waitUntil)
+  const deadline = Date.now() + 26000;
 
   try {
     let imageInfo = null;
@@ -392,7 +392,7 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 220));
+    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 260));
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
@@ -412,15 +412,24 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const today = new Date().toISOString().slice(0, 10);
   const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
 
-  const getTimeoutMs = () => Math.max(3000, Math.min(11000, deadline - Date.now()));
+  const hasGroq = Boolean(env.GROQ_API_KEY);
+  const hasGrok = Boolean(env.GROK_API_KEY || env.XAI_API_KEY);
+  const hasBackup = hasGroq || hasGrok;
 
-  // 1. Пробуем модели Gemini по очереди
+  // Если есть запасной Groq/Grok — не тратим больше 9.5с на одну модель Gemini и оставляем минимум 5с в запасе
+  // Если запасного нет — даем первой модели Gemini щедрые 17с, чтобы успела ответить даже в час-пик
+  const reserveForBackupMs = hasBackup ? 5500 : 1000;
+  const maxPerGeminiAttemptMs = hasBackup ? 9500 : 17000;
+
+  // 1. Пробуем модели Gemini
   if (env.GEMINI_API_KEY) {
-    for (const model of GEMINI_MODELS) {
-      if (Date.now() > deadline - 1500) {
-        errors.push('Время ожидания истекло');
-        break;
-      }
+    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
+
+    for (const model of modelsToTry) {
+      const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
+      if (timeLeftForGemini < 3000) break;
+
+      const attemptTimeout = Math.min(maxPerGeminiAttemptMs, timeLeftForGemini);
       try {
         return await callGeminiSingleModel(
           env.GEMINI_API_KEY,
@@ -428,7 +437,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
           fullSystemPrompt,
           userPromptText,
           imageInfo,
-          getTimeoutMs(),
+          attemptTimeout,
           env.ENABLE_GOOGLE_SEARCH === 'true'
         );
       } catch (err) {
@@ -440,10 +449,11 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
     errors.push('GEMINI_API_KEY не задан в Cloudflare');
   }
 
-  // 2. Запасной вариант 1: Бесплатный Groq (console.groq.com)
-  if (env.GROQ_API_KEY && Date.now() < deadline - 1500) {
+  // 2. Запасной вариант 1: Сверхбыстрый Groq (console.groq.com)
+  if (hasGroq && Date.now() < deadline - 2000) {
     try {
       const groqModel = imageInfo ? 'qwen/qwen3.8-27b' : 'openai/gpt-oss-120b';
+      const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
       return await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
         env.GROQ_API_KEY,
@@ -451,7 +461,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
         fullSystemPrompt,
         userPromptText,
         imageInfo,
-        getTimeoutMs()
+        timeoutMs
       );
     } catch (err) {
       console.warn('Groq failed:', err.message);
@@ -461,8 +471,9 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
 
   // 3. Запасной вариант 2: xAI Grok (console.x.ai)
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
-  if (grokKey && Date.now() < deadline - 1500) {
+  if (grokKey && Date.now() < deadline - 2000) {
     try {
+      const timeoutMs = Math.max(3000, deadline - Date.now() - 500);
       return await callOpenAICompatibleAPI(
         'https://api.x.ai/v1/chat/completions',
         grokKey,
@@ -470,7 +481,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
         fullSystemPrompt,
         userPromptText,
         imageInfo,
-        getTimeoutMs()
+        timeoutMs
       );
     } catch (err) {
       console.warn('xAI Grok failed:', err.message);
@@ -502,6 +513,9 @@ async function callGeminiSingleModel(
     });
   }
 
+  // Минимальные/низкие размышления для максимальной скорости ответа
+  const thinkingLevel = model.includes('3.8') ? 'low' : 'minimal';
+
   const payload = {
     systemInstruction: {
       parts: [{ text: systemText }],
@@ -514,6 +528,9 @@ async function callGeminiSingleModel(
     ],
     generationConfig: {
       temperature: 0.3,
+      thinkingConfig: {
+        thinkingLevel,
+      },
     },
   };
 
@@ -528,7 +545,6 @@ async function callGeminiSingleModel(
     signal: AbortSignal.timeout(timeoutMs),
   });
 
-  // Если был включён поиск Google, но квота/тариф не пустил — повторяем без поиска
   if (useSearch && !response.ok && response.status !== 401) {
     delete payload.tools;
     response = await fetch(url, {
