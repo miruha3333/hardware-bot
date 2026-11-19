@@ -1,7 +1,7 @@
 import { SYSTEM_PROMPT } from './prompts.js';
 import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
-// Список моделей Gemini по приоритету (быстрые с наибольшими бесплатными лимитами)
+// Список моделей Gemini по приоритету
 const GEMINI_MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.6-flash',
@@ -293,7 +293,7 @@ async function handleCallbackQuery(callbackQuery, env) {
 }
 
 // ==========================================
-// АНАЛИЗ ЖЕЛЕЗА (GEMINI + ЗАПАСНЫЕ GROQ / GROK)
+// АНАЛИЗ ЖЕЛЕЗА (GEMINI + ДВУХШАГОВЫЙ GROQ + GROK)
 // ==========================================
 async function processHardwareAnalysis(message, user, env) {
   const chatId = message.chat.id;
@@ -405,7 +405,7 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЦЕПОЧКА НЕЙРОСЕТЕЙ: GEMINI -> GROQ -> GROK
+// ЦЕПОЧКА НЕЙРОСЕТЕЙ: GEMINI -> GROQ (2 ШАГА) -> GROK
 // ==========================================
 async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const errors = [];
@@ -416,14 +416,13 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const hasGrok = Boolean(env.GROK_API_KEY || env.XAI_API_KEY);
   const hasBackup = hasGroq || hasGrok;
 
-  // Если есть запасной Groq/Grok — не тратим больше 9.5с на одну модель Gemini и оставляем минимум 5с в запасе
-  // Если запасного нет — даем первой модели Gemini щедрые 17с, чтобы успела ответить даже в час-пик
-  const reserveForBackupMs = hasBackup ? 5500 : 1000;
-  const maxPerGeminiAttemptMs = hasBackup ? 9500 : 17000;
-
-  // 1. Пробуем модели Gemini
+  // 1. Пробуем Gemini:
+  // Если есть Groq — даем 1 быструю попытку на 6.5с (не ждем 20с впустую!)
+  // Если Groq нет — пробуем все модели дольше
   if (env.GEMINI_API_KEY) {
-    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
+    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 1) : GEMINI_MODELS;
+    const maxPerGeminiAttemptMs = hasBackup ? 6500 : 17000;
+    const reserveForBackupMs = hasBackup ? 8000 : 1000;
 
     for (const model of modelsToTry) {
       const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
@@ -449,20 +448,47 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
     errors.push('GEMINI_API_KEY не задан в Cloudflare');
   }
 
-  // 2. Запасной вариант 1: Сверхбыстрый Groq (console.groq.com)
-  if (hasGroq && Date.now() < deadline - 2000) {
+  // 2. Запасной вариант 1: Сверхбыстрый Groq
+  if (hasGroq && Date.now() < deadline - 2500) {
     try {
-      const groqModel = imageInfo ? 'qwen/qwen3.8-27b' : 'openai/gpt-oss-120b';
-      const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
-      return await callOpenAICompatibleAPI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        env.GROQ_API_KEY,
-        groqModel,
-        fullSystemPrompt,
-        userPromptText,
-        imageInfo,
-        timeoutMs
-      );
+      if (imageInfo) {
+        // Шаг 2А: Qwen читает ТОЛЬКО картинку (без базы знаний, чтобы точно влезть в лимит 8K TPM)
+        const ocrTimeout = Math.max(3000, Math.min(7500, deadline - Date.now() - 4000));
+        const extractedSpecs = await callOpenAICompatibleAPI(
+          'https://api.groq.com/openai/v1/chat/completions',
+          env.GROQ_API_KEY,
+          'qwen/qwen3.8-27b',
+          'Ты — точный распознаватель характеристик техники со скриншотов. Выдавай только сухие факты.',
+          'Внимательно перепиши со скриншота: точное название модели/артикул, цену и валюту, процессор, видеокарту, ОЗУ, накопитель, экран и все прочие видимые характеристики или описание продавца. Ничего не выдумывай и не оценивай, только факты.',
+          imageInfo,
+          ocrTimeout
+        );
+        console.log('Groq OCR success:', extractedSpecs.slice(0, 120));
+
+        // Шаг 2Б: Умная текстовая модель 120B проводит полный инженерный разбор с базой знаний
+        const enrichedPrompt = `${userPromptText}\n\nРаспознанные данные со скриншота:\n${extractedSpecs}`;
+        const analysisTimeout = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
+        return await callOpenAICompatibleAPI(
+          'https://api.groq.com/openai/v1/chat/completions',
+          env.GROQ_API_KEY,
+          'openai/gpt-oss-120b',
+          fullSystemPrompt,
+          enrichedPrompt,
+          null,
+          analysisTimeout
+        );
+      } else {
+        const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
+        return await callOpenAICompatibleAPI(
+          'https://api.groq.com/openai/v1/chat/completions',
+          env.GROQ_API_KEY,
+          'openai/gpt-oss-120b',
+          fullSystemPrompt,
+          userPromptText,
+          null,
+          timeoutMs
+        );
+      }
     } catch (err) {
       console.warn('Groq failed:', err.message);
       errors.push(`Groq: ${err.message}`);
@@ -513,7 +539,6 @@ async function callGeminiSingleModel(
     });
   }
 
-  // Минимальные/низкие размышления для максимальной скорости ответа
   const thinkingLevel = model.includes('3.8') ? 'low' : 'minimal';
 
   const payload = {
