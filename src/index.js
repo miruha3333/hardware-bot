@@ -359,7 +359,7 @@ async function processHardwareAnalysis(message, user, env) {
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 250000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 500000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
@@ -562,7 +562,7 @@ async function callGeminiSingleModel(
     });
   }
 
-  const thinkingLevel = model.includes('3.8') ? 'low' : 'minimal';
+  const thinkingLevel = 'low';
 
   const payload = {
     systemInstruction: {
