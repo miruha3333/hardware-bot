@@ -433,19 +433,22 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const hasGroq = Boolean(env.GROQ_API_KEY);
   const hasGrok = Boolean(env.GROK_API_KEY || env.XAI_API_KEY);
   const hasBackup = hasGroq || hasGrok;
-  const useGoogleSearch = env.ENABLE_GOOGLE_SEARCH !== 'false';
+  // По умолчанию быстрый режим без долгого Google Search, чтобы Gemini 3.8 Flash не вылетала по таймауту.
+  // При желании можно включить поиск переменной ENABLE_GOOGLE_SEARCH = true в Cloudflare.
+  const useGoogleSearch = env.ENABLE_GOOGLE_SEARCH === 'true';
 
-  // 1. Пробуем Gemini (с реальным поиском Google Search)
+  // 1. Пробуем Gemini: сначала 3.8-flash (до 11.5с), затем быструю 3.5-flash-lite (до 7.5с)
   if (env.GEMINI_API_KEY) {
     const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
-    const maxPerGeminiAttemptMs = hasBackup ? 14500 : 17000;
-    const reserveForBackupMs = hasBackup ? 8500 : 1000;
+    const reserveForBackupMs = hasBackup ? 7000 : 1000;
 
-    for (const model of modelsToTry) {
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const model = modelsToTry[i];
       const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
-      if (timeLeftForGemini < 4500) break;
+      if (timeLeftForGemini < 3500) break;
 
-      const attemptTimeout = Math.min(maxPerGeminiAttemptMs, timeLeftForGemini);
+      const capMs = i === 0 ? 11500 : 7500;
+      const attemptTimeout = Math.min(capMs, timeLeftForGemini);
       try {
         const result = await callGeminiSingleModel(
           env.GEMINI_API_KEY,
@@ -471,20 +474,20 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   if (hasGroq && Date.now() < deadline - 2500) {
     try {
       if (imageInfo) {
-        const ocrTimeout = Math.max(3000, Math.min(7500, deadline - Date.now() - 4000));
+        const ocrTimeout = Math.max(3000, Math.min(7000, deadline - Date.now() - 3500));
         const extractedSpecs = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
           env.GROQ_API_KEY,
           'qwen/qwen3.8-27b',
-          'Ты — точный распознаватель характеристик техники со скриншотов. Выдавай только сухие факты.',
-          'Внимательно перепиши со скриншота символ в символ (не пропуская ни одной буквы в модели, например 15AHP9, 7445HS): точное название модели и артикул в скобках, цену и валюту, процессор, видеокарту, ОЗУ, накопитель, экран, вес и все прочие видимые характеристики. Ничего не выдумывай и не оценивай, только факты.',
+          'Ты — точный распознаватель текста со скриншотов магазинов и объявлений. Выдавай только факты.',
+          'Внимательно перепиши со скриншота ВСЕ данные: 1) Крупный заголовок (модель и артикул в скобках, символ в символ, например 15AHP9, 7445HS); 2) ОБЯЗАТЕЛЬНО цену и валюту (например: «от 40 210 до 139 999 грн»); 3) Процессор, видеокарту, ОЗУ, накопитель, экран, вес и все теги/характеристики, которые видны на картинке.',
           imageInfo,
           ocrTimeout
         );
-        console.log('Groq OCR success:', extractedSpecs.slice(0, 120));
+        console.log('Groq OCR success:', extractedSpecs.slice(0, 140));
 
         const enrichedPrompt = `${userPromptText}\n\nРаспознанные данные со скриншота:\n${extractedSpecs}`;
-        const analysisTimeout = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
+        const analysisTimeout = Math.max(3000, deadline - Date.now() - (hasGrok ? 3000 : 500));
         const result = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
           env.GROQ_API_KEY,
@@ -497,7 +500,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
         console.log('AI success: Groq (qwen OCR + gpt-oss-120b)');
         return result;
       } else {
-        const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
+        const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3000 : 500));
         const result = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
           env.GROQ_API_KEY,
