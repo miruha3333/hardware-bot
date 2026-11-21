@@ -593,7 +593,11 @@ async function callGeminiSingleModel(
     signal: AbortSignal.timeout(timeoutMs),
   });
 
+  let usedSearchSuccessfully = useSearch && response.ok;
   if (useSearch && !response.ok && response.status !== 401) {
+    const searchErr = await response.clone().text();
+    console.warn(`Google Search rejected (${response.status}), retrying without search:`, searchErr.slice(0, 120));
+    usedSearchSuccessfully = false;
     delete payload.tools;
     response = await fetch(url, {
       method: 'POST',
@@ -616,6 +620,8 @@ async function callGeminiSingleModel(
   }
 
   const data = await response.json();
+  const searchQueries = data?.candidates?.[0]?.groundingMetadata?.webSearchQueries || [];
+  console.log(`Gemini (${model}) searchUsed=${usedSearchSuccessfully}, queries=${JSON.stringify(searchQueries)}`);
   const text = data?.candidates?.[0]?.content?.parts
     ?.map((p) => p.text || '')
     .join('')
