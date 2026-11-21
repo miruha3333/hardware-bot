@@ -4,8 +4,8 @@ import { KNOWLEDGE_BASE } from './knowledge_base.js';
 // Список моделей Gemini по приоритету (сначала самая точная 3.8-flash, при лимите — запасные)
 const GEMINI_MODELS = [
   'gemini-3.8-flash',
-  'gemini-3.6-flash',
   'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
 ];
 
 export default {
@@ -438,12 +438,12 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   // 1. Пробуем Gemini (с реальным поиском Google Search)
   if (env.GEMINI_API_KEY) {
     const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
-    const maxPerGeminiAttemptMs = hasBackup ? 10500 : 17000;
-    const reserveForBackupMs = hasBackup ? 9000 : 1000;
+    const maxPerGeminiAttemptMs = hasBackup ? 14500 : 17000;
+    const reserveForBackupMs = hasBackup ? 8500 : 1000;
 
     for (const model of modelsToTry) {
       const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
-      if (timeLeftForGemini < 3000) break;
+      if (timeLeftForGemini < 4500) break;
 
       const attemptTimeout = Math.min(maxPerGeminiAttemptMs, timeLeftForGemini);
       try {
