@@ -1,11 +1,11 @@
 import { SYSTEM_PROMPT } from './prompts.js';
 import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
-// Список моделей Gemini по приоритету
+// Список моделей Gemini по приоритету (сначала самая точная 3.8-flash, при лимите — запасные)
 const GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.6-flash',
   'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
 ];
 
 export default {
@@ -437,9 +437,9 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
 
   // 1. Пробуем Gemini (с реальным поиском Google Search)
   if (env.GEMINI_API_KEY) {
-    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 1) : GEMINI_MODELS;
-    const maxPerGeminiAttemptMs = hasBackup ? 9500 : 17000;
-    const reserveForBackupMs = hasBackup ? 11000 : 1000;
+    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
+    const maxPerGeminiAttemptMs = hasBackup ? 10500 : 17000;
+    const reserveForBackupMs = hasBackup ? 9000 : 1000;
 
     for (const model of modelsToTry) {
       const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
@@ -477,7 +477,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
           env.GROQ_API_KEY,
           'qwen/qwen3.8-27b',
           'Ты — точный распознаватель характеристик техники со скриншотов. Выдавай только сухие факты.',
-          'Внимательно перепиши со скриншота: точное название модели/артикул, цену и валюту, процессор, видеокарту, ОЗУ, накопитель, экран и все прочие видимые характеристики или описание продавца. Ничего не выдумывай и не оценивай, только факты.',
+          'Внимательно перепиши со скриншота символ в символ (не пропуская ни одной буквы в модели, например 15AHP9, 7445HS): точное название модели и артикул в скобках, цену и валюту, процессор, видеокарту, ОЗУ, накопитель, экран, вес и все прочие видимые характеристики. Ничего не выдумывай и не оценивай, только факты.',
           imageInfo,
           ocrTimeout
         );
