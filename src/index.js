@@ -126,12 +126,16 @@ async function handleMessage(message, env) {
 
     if (credits <= 0) {
       await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
+      const adminNick = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
+      const adminTag = adminNick ? `\n💬 Администратор: @${adminNick}` : '';
+
       await sendTelegramMessage(
         env.BOT_TOKEN,
         chatId,
         `😔 На вашем балансе <b>0 проверок</b>.\n\n` +
           `Вы можете приобрести пакет проверок (например, 10 штук) или заказать персональный подбор техники.\n\n` +
-          `📌 Ваш Telegram ID: <code>${userId}</code>\n` +
+          `📌 Ваш Telegram ID: <code>${userId}</code>` +
+          `${adminTag}\n` +
           `<i>Нажмите на ID, чтобы скопировать, и отправьте его администратору после оплаты.</i>`,
         {
           parse_mode: 'HTML',
@@ -198,8 +202,8 @@ async function handleMessage(message, env) {
       env.BOT_TOKEN,
       chatId,
       `✅ Бюджет: <b>${escapeHtml(text)}</b>\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
-        `или отправьте <b>текст / точное название модели</b>.`,
+        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара (лучше с ценой и максимумом параметров) ` +
+        `или просто <b>скопируйте и вставьте полный текст характеристик</b> со страницы магазина — так разбор будет максимально точным!`,
       { parse_mode: 'HTML' }
     );
     return;
@@ -285,8 +289,8 @@ async function handleCallbackQuery(callbackQuery, env) {
       chatId,
       messageId,
       `⏭ Бюджет пропущен.\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
-        `или отправьте <b>текст / точное название модели</b>.`,
+        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара (лучше с ценой и максимумом параметров) ` +
+        `или просто <b>скопируйте и вставьте полный текст характеристик</b> со страницы магазина — так разбор будет максимально точным!`,
       { parse_mode: 'HTML' }
     );
   }
@@ -322,6 +326,18 @@ async function processHardwareAnalysis(message, user, env) {
       chatId,
       'Пожалуйста, отправьте <b>сжатое фото (скриншот)</b> или <b>текст</b> с характеристиками.\n' +
         '<i>Если отправляете картинку, убедитесь, что она отправлена как «Фото», а не как «Файл».</i>',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // Если пользователь прислал только ссылку на сайт — просим скрин или текст (проверка не сгорает)
+  if (!hasPhoto && /^https?:\/\/\S+$/i.test(textInput)) {
+    await sendTelegramMessage(
+      env.BOT_TOKEN,
+      chatId,
+      '🔗 Сайты магазинов защищены от автоматического чтения ссылок.\n\n' +
+        'Пожалуйста, сделайте <b>скриншот характеристик</b> или просто <b>скопируйте текст таблицы со страницы</b> и отправьте сюда. Ваша проверка не списана!',
       { parse_mode: 'HTML' }
     );
     return;
@@ -381,7 +397,9 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
+    const adminNick = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
+    const adminLine = adminNick ? `\n📩 Личный подбор / связь: @${adminNick}` : '';
+    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}${adminLine}`;
     const helpKeyboard = getAdminContactInlineKeyboard(env, '🤝 Заказать личный подбор');
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
@@ -415,14 +433,13 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   const hasGroq = Boolean(env.GROQ_API_KEY);
   const hasGrok = Boolean(env.GROK_API_KEY || env.XAI_API_KEY);
   const hasBackup = hasGroq || hasGrok;
+  const useGoogleSearch = env.ENABLE_GOOGLE_SEARCH !== 'false';
 
-  // 1. Пробуем Gemini:
-  // Если есть Groq — даем 1 быструю попытку на 6.5с (не ждем 20с впустую!)
-  // Если Groq нет — пробуем все модели дольше
+  // 1. Пробуем Gemini (с реальным поиском Google Search)
   if (env.GEMINI_API_KEY) {
     const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 1) : GEMINI_MODELS;
-    const maxPerGeminiAttemptMs = hasBackup ? 6500 : 17000;
-    const reserveForBackupMs = hasBackup ? 8000 : 1000;
+    const maxPerGeminiAttemptMs = hasBackup ? 9500 : 17000;
+    const reserveForBackupMs = hasBackup ? 11000 : 1000;
 
     for (const model of modelsToTry) {
       const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
@@ -430,15 +447,17 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
 
       const attemptTimeout = Math.min(maxPerGeminiAttemptMs, timeLeftForGemini);
       try {
-        return await callGeminiSingleModel(
+        const result = await callGeminiSingleModel(
           env.GEMINI_API_KEY,
           model,
           fullSystemPrompt,
           userPromptText,
           imageInfo,
           attemptTimeout,
-          env.ENABLE_GOOGLE_SEARCH === 'true'
+          useGoogleSearch
         );
+        console.log(`AI success: Gemini (${model}), search=${useGoogleSearch}`);
+        return result;
       } catch (err) {
         console.warn(`Gemini (${model}) failed:`, err.message);
         errors.push(`${model}: ${err.message}`);
@@ -452,7 +471,6 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   if (hasGroq && Date.now() < deadline - 2500) {
     try {
       if (imageInfo) {
-        // Шаг 2А: Qwen читает ТОЛЬКО картинку (без базы знаний, чтобы точно влезть в лимит 8K TPM)
         const ocrTimeout = Math.max(3000, Math.min(7500, deadline - Date.now() - 4000));
         const extractedSpecs = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
@@ -465,10 +483,9 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
         );
         console.log('Groq OCR success:', extractedSpecs.slice(0, 120));
 
-        // Шаг 2Б: Умная текстовая модель 120B проводит полный инженерный разбор с базой знаний
         const enrichedPrompt = `${userPromptText}\n\nРаспознанные данные со скриншота:\n${extractedSpecs}`;
         const analysisTimeout = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
-        return await callOpenAICompatibleAPI(
+        const result = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
           env.GROQ_API_KEY,
           'openai/gpt-oss-120b',
@@ -477,9 +494,11 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
           null,
           analysisTimeout
         );
+        console.log('AI success: Groq (qwen OCR + gpt-oss-120b)');
+        return result;
       } else {
         const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3500 : 500));
-        return await callOpenAICompatibleAPI(
+        const result = await callOpenAICompatibleAPI(
           'https://api.groq.com/openai/v1/chat/completions',
           env.GROQ_API_KEY,
           'openai/gpt-oss-120b',
@@ -488,6 +507,8 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
           null,
           timeoutMs
         );
+        console.log('AI success: Groq (gpt-oss-120b text)');
+        return result;
       }
     } catch (err) {
       console.warn('Groq failed:', err.message);
@@ -500,7 +521,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   if (grokKey && Date.now() < deadline - 2000) {
     try {
       const timeoutMs = Math.max(3000, deadline - Date.now() - 500);
-      return await callOpenAICompatibleAPI(
+      const result = await callOpenAICompatibleAPI(
         'https://api.x.ai/v1/chat/completions',
         grokKey,
         'grok-4.7',
@@ -509,6 +530,8 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
         imageInfo,
         timeoutMs
       );
+      console.log('AI success: xAI Grok');
+      return result;
     } catch (err) {
       console.warn('xAI Grok failed:', err.message);
       errors.push(`Grok: ${err.message}`);
