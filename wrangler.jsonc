@@ -1,11 +1,14 @@
 {
-  "name": "hardware-bot",
+  "name": "hardware-analyzer-bot",
   "main": "src/index.js",
   "compatibility_date": "2026-01-01",
   "workers_dev": true,
   "keep_vars": true,
   "observability": {
     "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
   },
   "d1_databases": [
     {
