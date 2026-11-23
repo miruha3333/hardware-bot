@@ -346,8 +346,9 @@ async function processHardwareAnalysis(message, user, env) {
     // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (или текста) ---
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
+      // Берем версию ~800px (до 120 КБ), чтобы не перегружать vision-токены
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 250000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 120000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
@@ -410,7 +411,7 @@ async function processHardwareAnalysis(message, user, env) {
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
   } catch (err) {
-    console.error('Analysis error:', err);
+    console.error('Analysis error:', err.message);
 
     if (statusMsg?.result?.message_id) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
@@ -429,7 +430,7 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА (LLAMA 4 SCOUT 30K TPM -> QWEN -> GEMINI)
 // ==========================================
 async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
@@ -439,36 +440,64 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     'Дальше списком перепиши со скриншота ВСЕ видимые характеристики: цену, валюту, процессор, видеокарту, ОЗУ, накопитель, экран, порты, теги и описание. Ничего не придумывай и не оценивай.';
 
   let rawText = '';
+  const ocrErrors = [];
 
   if (env.GROQ_API_KEY) {
-    try {
-      rawText = await callOpenAICompatibleAPI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        env.GROQ_API_KEY,
-        'qwen/qwen3.8-27b',
-        ocrSystem,
-        ocrPrompt,
-        imageInfo,
-        Math.min(7500, Math.max(3000, deadline - Date.now() - 12000))
-      );
-    } catch (err) {
-      console.warn('Groq OCR failed:', err.message);
+    // Сначала Llama 4 Scout (лимит 30 000 TPM!), затем Qwen 3.8
+    const groqVisionModels = [
+      'meta-llama/llama-4-scout-17b-16e-instruct',
+      'qwen/qwen3.8-27b',
+    ];
+
+    for (const vModel of groqVisionModels) {
+      if (Date.now() > deadline - 10000) break;
+      try {
+        rawText = await callOpenAICompatibleAPI(
+          'https://api.groq.com/openai/v1/chat/completions',
+          env.GROQ_API_KEY,
+          vModel,
+          ocrSystem,
+          ocrPrompt,
+          imageInfo,
+          Math.min(7000, Math.max(3000, deadline - Date.now() - 10000)),
+          700 // Ограничиваем длину ответа, чтобы не съедать лимит TPM
+        );
+        if (rawText) {
+          console.log(`OCR success via ${vModel}`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`Groq OCR (${vModel}) failed:`, err.message);
+        ocrErrors.push(`${vModel}: ${err.message}`);
+      }
     }
   }
 
   if (!rawText && env.GEMINI_API_KEY) {
-    rawText = await callGeminiSingleModel(
-      env.GEMINI_API_KEY,
-      'gemini-3.5-flash-lite',
-      ocrSystem,
-      ocrPrompt,
-      imageInfo,
-      Math.min(7500, Math.max(3000, deadline - Date.now() - 10000))
-    );
+    for (const gModel of GEMINI_MODELS) {
+      if (Date.now() > deadline - 7000) break;
+      try {
+        rawText = await callGeminiSingleModel(
+          env.GEMINI_API_KEY,
+          gModel,
+          ocrSystem,
+          ocrPrompt,
+          imageInfo,
+          Math.min(7000, Math.max(3000, deadline - Date.now() - 7000))
+        );
+        if (rawText) {
+          console.log(`OCR success via ${gModel}`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`Gemini OCR (${gModel}) failed:`, err.message);
+        ocrErrors.push(`${gModel}: ${err.message}`);
+      }
+    }
   }
 
   if (!rawText) {
-    throw new Error('Не удалось распознать скриншот (проверьте ключи GROQ_API_KEY / GEMINI_API_KEY)');
+    throw new Error(`Не удалось распознать скриншот (${ocrErrors.join(' | ')})`);
   }
 
   const match = rawText.match(/MODEL_FOR_SEARCH:\s*(.+)/i);
@@ -486,7 +515,6 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
 // ЭТАП 2: ЖИВОЙ ПОИСК В GOOGLE (SERPER / TAVILY)
 // ==========================================
 async function runLiveWebSearch(env, query) {
-  // Вариант 1: Serper.dev (настоящий Google, 2500 запросов бесплатно)
   if (env.SERPER_API_KEY) {
     try {
       const [specsRes, priceRes] = await Promise.all([
@@ -502,7 +530,6 @@ async function runLiveWebSearch(env, query) {
     }
   }
 
-  // Вариант 2: Tavily (1000 запросов в месяц бесплатно)
   if (env.TAVILY_API_KEY) {
     try {
       const tavilyText = await fetchTavily(
@@ -595,8 +622,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
 
   const getTimeout = (maxMs = 9500) => Math.max(3000, Math.min(maxMs, deadline - Date.now() - 800));
 
-  // Если живого Google-поиска (Serper/Tavily) ещё нет, но есть Groq —
-  // сразу пускаем встроенный поисковый агент groq/compound-mini (70K TPM, сам гуглит!)
+  // Если внешнего поиска ещё нет, пробуем встроенный поисковый агент groq/compound-mini (70K TPM)
   if (!hasLiveSearch && env.GROQ_API_KEY && Date.now() < deadline - 4000) {
     try {
       console.log('Using groq/compound-mini built-in web search');
@@ -607,7 +633,8 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(13000)
+        getTimeout(13000),
+        1800
       );
     } catch (err) {
       console.warn('groq/compound-mini failed:', err.message);
@@ -615,7 +642,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Если свежие факты из Google (Serper/Tavily) уже собраны — отдаём их умной модели 120B (отвечает за 1.5 сек!)
+  // Если свежие факты из Google уже собраны — отдаём умной модели 120B
   if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       return await callOpenAICompatibleAPI(
@@ -625,13 +652,13 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(8000)
+        getTimeout(8000),
+        1800
       );
     } catch (err) {
       console.warn('gpt-oss-120b failed:', err.message);
       errors.push(`Groq120B: ${err.message}`);
 
-      // Если вдруг запрос перешагнул лимит 8K TPM (HTTP 413) — страхуемся через compound-mini (70K TPM!)
       if (Date.now() < deadline - 3000) {
         try {
           return await callOpenAICompatibleAPI(
@@ -641,7 +668,8 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
             fullSystemPrompt,
             userPromptText,
             null,
-            getTimeout(11000)
+            getTimeout(11000),
+            1800
           );
         } catch (err2) {
           errors.push(`CompoundBackup: ${err2.message}`);
@@ -650,7 +678,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Запасной вариант: Gemini (огромный контекст, если серверы Google не висят)
+  // Запасной вариант: Gemini
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
       if (Date.now() > deadline - 3000) break;
@@ -681,7 +709,8 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(8000)
+        getTimeout(8000),
+        1800
       );
     } catch (err) {
       errors.push(`Grok: ${err.message}`);
@@ -709,7 +738,6 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
       temperature: 0.3,
-      thinkingConfig: { thinkingLevel: 'minimal' },
     },
   };
 
@@ -722,7 +750,7 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
 
   if (!response.ok) {
     const errBody = await response.text();
-    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 100)})`);
+    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 120)})`);
   }
 
   const data = await response.json();
@@ -742,7 +770,8 @@ async function callOpenAICompatibleAPI(
   systemText,
   userPromptText,
   imageInfo,
-  timeoutMs
+  timeoutMs,
+  maxTokens = 1800
 ) {
   const userContent = imageInfo
     ? [
@@ -767,13 +796,14 @@ async function callOpenAICompatibleAPI(
         { role: 'user', content: userContent },
       ],
       temperature: 0.35,
+      max_tokens: maxTokens,
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
     const errBody = await response.text();
-    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 100)})`);
+    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 120)})`);
   }
 
   const data = await response.json();
