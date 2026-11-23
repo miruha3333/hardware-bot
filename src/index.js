@@ -813,28 +813,45 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
 }
 
 // ==========================================
-// ВЫЗОВЫ CLOUDFLARE WORKERS AI
+// ВЫЗОВЫ CLOUDFLARE WORKERS AI (С ТАЙМАУТОМ)
 // ==========================================
+function runWithTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}: таймаут ${ms / 1000}с`)), ms)
+    ),
+  ]);
+}
+
 async function callCloudflareGPT120B(aiBinding, systemText, userPromptText) {
-  const res = await aiBinding.run('@cf/openai/gpt-oss-120b', {
-    instructions: systemText,
-    input: userPromptText,
-    reasoning: { effort: 'low' },
-  });
+  const res = await runWithTimeout(
+    aiBinding.run('@cf/openai/gpt-oss-120b', {
+      instructions: systemText,
+      input: userPromptText,
+      reasoning: { effort: 'low' },
+    }),
+    12000,
+    'Cloudflare 120B'
+  );
   const text = extractCloudflareText(res);
   if (!text) throw new Error('Пустой ответ Cloudflare 120B');
   return text;
 }
 
 async function callCloudflareLlama70B(aiBinding, systemText, userPromptText) {
-  const res = await aiBinding.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
-    messages: [
-      { role: 'system', content: systemText },
-      { role: 'user', content: userPromptText },
-    ],
-    max_tokens: 2100,
-    temperature: 0.3,
-  });
+  const res = await runWithTimeout(
+    aiBinding.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+      messages: [
+        { role: 'system', content: systemText },
+        { role: 'user', content: userPromptText },
+      ],
+      max_tokens: 2100,
+      temperature: 0.3,
+    }),
+    10000,
+    'Cloudflare Llama 70B'
+  );
   const text = extractCloudflareText(res);
   if (!text) throw new Error('Пустой ответ Cloudflare Llama 70B');
   return text;
