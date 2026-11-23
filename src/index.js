@@ -436,7 +436,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
   const ocrPrompt =
     'Изучи скриншот товара.\n' +
-    'ПЕРВОЙ СТРОКОЙ строго напиши: MODEL_FOR_SEARCH: <точное название бренда, модели и артикула на латинице/оригинале, без лишних слов, например Apple MacBook Neo 2026 MHFD4>\n' +
+    'ПЕРВОЙ СТРОКОЙ строго напиши: MODEL_FOR_SEARCH: <бренд, точная модель, артикул И главный GPU/CPU если есть, например Gigabyte GAMING A16 3WH RTX 5070 Ryzen 7 260>\n' +
     'Дальше списком перепиши со скриншота ВСЕ видимые характеристики: цену, валюту, процессор, видеокарту, ОЗУ, накопитель, экран, порты, теги и описание. Ничего не придумывай и не оценивай.';
 
   let rawText = '';
@@ -518,7 +518,7 @@ async function runLiveWebSearch(env, query) {
   if (env.SERPER_API_KEY) {
     try {
       const [specsRes, priceRes] = await Promise.all([
-        fetchSerper(env.SERPER_API_KEY, `${query} specs ports display TGP review`),
+        fetchSerper(env.SERPER_API_KEY, `${query} specs display sRGB TGP battery Wh cooling review`),
         fetchSerper(env.SERPER_API_KEY, `${query} характеристики цена отзывы проблемы`),
       ]);
       const combined = [specsRes, priceRes].filter(Boolean).join('\n---\n');
@@ -771,7 +771,7 @@ async function callOpenAICompatibleAPI(
   userPromptText,
   imageInfo,
   timeoutMs,
-  maxTokens = 1800
+  maxTokens = 2500
 ) {
   const userContent = imageInfo
     ? [
