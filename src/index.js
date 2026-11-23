@@ -82,7 +82,7 @@ async function handleMessage(message, env) {
       chatId,
       `👋 Привет, <b>${firstName}</b>!\n\n` +
         `Я — <b>Честный анализатор железа</b>. Пришли мне скриншот товара или текст с характеристиками ` +
-        `ноутбука, ПК или смартфона: я разберу указанные параметры, подсвечу, что продавец скрыл, ` +
+        `ноутбука, ПК или смартфона: я простым языком оценю железо, покажу, что продавец скрыл, ` +
         `и проверю известные подвохи модели в сети.\n` +
         `${bonusLine}\n` +
         `💳 Доступно проверок: <b>${credits}</b>\n\n` +
@@ -368,14 +368,14 @@ async function processHardwareAnalysis(message, user, env) {
       console.log('Live search chars:', liveSearchData.length);
     }
 
-    // --- ЭТАП 3: Финальный разбор (приоритет данным пользователя + оговорка для поиска) ---
+    // --- ЭТАП 3: Финальный разбор ---
     const userPromptText =
       `Задача пользователя: ${user.temp_task || 'Не указана'}\n` +
       `Бюджет пользователя: ${user.temp_budget || 'Не указан'}\n\n` +
       (textInput ? `=== ДАННЫЕ ОТ ПОЛЬЗОВАТЕЛЯ (ТЕКСТ) ===\n${textInput}\n\n` : '') +
       (extractedSpecs ? `=== ДАННЫЕ СО СКРИНШОТА ПОЛЬЗОВАТЕЛЯ ===\n${extractedSpecs}\n\n` : '') +
       (liveSearchData
-        ? `=== ДОПОЛНИТЕЛЬНАЯ СПРАВКА ИЗ ЖИВОГО ПОИСКА (ТОЛЬКО С ОГОВОРКОЙ, НЕ ЗАМЕНЯЙ СКРИН!) ===\n${liveSearchData}\n`
+        ? `=== ДОПОЛНИТЕЛЬНАЯ СПРАВКА ИЗ ЖИВОГО ПОИСКА (ТОЛЬКО ДЛЯ БЛОКА 2 С ОГОВОРКОЙ, НЕ СМЕШИВАЙ С БЛОКОМ 1!) ===\n${liveSearchData}\n`
         : '=== ПОИСК В СЕТИ НЕ ВЕРНУЛ ДАННЫХ ===\nОпирайся ТОЛЬКО на данные пользователя и предупреди, что скрытые параметры неизвестны.\n');
 
     const aiResponse = await generateFinalAnalysis(
@@ -619,7 +619,6 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
 
   const getTimeout = (maxMs = 9500) => Math.max(3000, Math.min(maxMs, deadline - Date.now() - 800));
 
-  // Если внешнего поиска ещё нет, пробуем встроенный поисковый агент groq/compound-mini (70K TPM)
   if (!hasLiveSearch && env.GROQ_API_KEY && Date.now() < deadline - 4000) {
     try {
       console.log('Using groq/compound-mini built-in web search');
@@ -631,7 +630,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         userPromptText,
         null,
         getTimeout(13000),
-        2400
+        2100
       );
     } catch (err) {
       console.warn('groq/compound-mini failed:', err.message);
@@ -639,7 +638,6 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Если свежие факты из Google уже собраны — отдаём умной модели 120B (с low reasoning и 2400 токенами)
   if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       return await callOpenAICompatibleAPI(
@@ -650,7 +648,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         userPromptText,
         null,
         getTimeout(8500),
-        2400
+        2100
       );
     } catch (err) {
       console.warn('gpt-oss-120b failed:', err.message);
@@ -666,7 +664,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
             userPromptText,
             null,
             getTimeout(11000),
-            2400
+            2100
           );
         } catch (err2) {
           errors.push(`CompoundBackup: ${err2.message}`);
@@ -675,7 +673,6 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Запасной вариант: Gemini
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
       if (Date.now() > deadline - 3000) break;
@@ -695,7 +692,6 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Запасной вариант: xAI Grok
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
   if (grokKey && Date.now() < deadline - 2500) {
     try {
@@ -707,7 +703,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         userPromptText,
         null,
         getTimeout(8000),
-        2400
+        2100
       );
     } catch (err) {
       errors.push(`Grok: ${err.message}`);
@@ -768,7 +764,7 @@ async function callOpenAICompatibleAPI(
   userPromptText,
   imageInfo,
   timeoutMs,
-  maxTokens = 2400
+  maxTokens = 2100
 ) {
   const userContent = imageInfo
     ? [
@@ -790,7 +786,6 @@ async function callOpenAICompatibleAPI(
     max_tokens: maxTokens,
   };
 
-  // Снижаем скрытые «размышления» у 120B, чтобы не тратить токены зря и не обрывать ответ
   if (model === 'openai/gpt-oss-120b') {
     requestBody.reasoning_effort = 'low';
   }
@@ -1060,4 +1055,94 @@ async function sendLongFormattedResponse(botToken, chatId, rawText, lastReplyMar
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
     const replyMarkup = isLast ? lastReplyMarkup : undefined;
-    const htmlChunk = formatMarkdownToSafeHtml(chunks[i]
+    const htmlChunk = formatMarkdownToSafeHtml(chunks[i]);
+
+    const res = await sendTelegramMessage(botToken, chatId, htmlChunk, {
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup,
+    });
+
+    if (!res.ok) {
+      await sendTelegramMessage(botToken, chatId, chunks[i], {
+        reply_markup: replyMarkup,
+      });
+    }
+  }
+}
+
+async function sendTelegramMessage(botToken, chatId, text, extra = {}) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        ...extra,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error('Telegram API error:', JSON.stringify(data));
+    }
+    return data;
+  } catch (err) {
+    console.error('sendTelegramMessage error:', err);
+    return { ok: false };
+  }
+}
+
+async function editTelegramMessage(botToken, chatId, messageId, text, extra = {}) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        ...extra,
+      }),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('editTelegramMessage error:', err);
+    return { ok: false };
+  }
+}
+
+async function deleteTelegramMessage(botToken, chatId, messageId) {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+    });
+  } catch {
+    // Игнорируем
+  }
+}
+
+async function sendChatAction(botToken, chatId, action) {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action }),
+    });
+  } catch {
+    // Игнорируем
+  }
+}
+
+async function answerCallbackQuery(botToken, callbackQueryId) {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId }),
+    });
+  } catch {
+    // Игнорируем
+  }
+}
