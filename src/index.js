@@ -330,17 +330,17 @@ async function processHardwareAnalysis(message, user, env) {
     return;
   }
 
-  // Секретные админ-теги для проверки качества любой запасной модели:
-  // #test_compound, #test_gemini35, #test_gemini36, #test_grok, #test_120b
+  // Секретные админ-теги для проверки качества любой модели:
+  // #test_120b, #test_llama70, #test_qwen, #test_scout, #test_gemini35, #test_gemini36, #test_grok
   let forcedModel = '';
   if (isAdmin && rawTextInput) {
-    const tagMatch = rawTextInput.match(/#test_(compound|gemini35|gemini36|grok|120b)\b/i);
+    const tagMatch = rawTextInput.match(/#test_(120b|llama70|qwen|scout|gemini35|gemini36|grok)\b/i);
     if (tagMatch) {
       forcedModel = tagMatch[1].toLowerCase();
     }
   }
   const textInput = forcedModel
-    ? rawTextInput.replace(/#test_(compound|gemini35|gemini36|grok|120b)\b/gi, '').trim()
+    ? rawTextInput.replace(/#test_(120b|llama70|qwen|scout|gemini35|gemini36|grok)\b/gi, '').trim()
     : rawTextInput;
 
   await sendChatAction(env.BOT_TOKEN, chatId, 'typing');
@@ -392,13 +392,7 @@ async function processHardwareAnalysis(message, user, env) {
         ? `=== ДОПОЛНИТЕЛЬНАЯ СПРАВКА ИЗ ЖИВОГО ПОИСКА (ТОЛЬКО ДЛЯ БЛОКА 2 С ОГОВОРКОЙ, НЕ СМЕШИВАЙ С БЛОКОМ 1!) ===\n${liveSearchData}\n`
         : '=== ПОИСК В СЕТИ НЕ ВЕРНУЛ ДАННЫХ ===\nОпирайся ТОЛЬКО на данные пользователя и предупреди, что скрытые параметры неизвестны.\n');
 
-    const aiResult = await generateFinalAnalysis(
-      env,
-      userPromptText,
-      Boolean(liveSearchData),
-      deadline,
-      forcedModel
-    );
+    const aiResult = await generateFinalAnalysis(env, userPromptText, deadline, forcedModel);
     console.log('Final analysis model used:', aiResult.modelUsed);
 
     await env.DB.prepare(
@@ -629,40 +623,34 @@ async function fetchTavily(apiKey, query) {
 // ==========================================
 // ЭТАП 3: ФИНАЛЬНЫЙ ИНЖЕНЕРНЫЙ АНАЛИЗ
 // ==========================================
-async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadline, forcedModel = '') {
+async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel = '') {
   const errors = [];
   const today = new Date().toISOString().slice(0, 10);
   const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
 
   const getTimeout = (maxMs = 9500) => Math.max(3000, Math.min(maxMs, deadline - Date.now() - 800));
 
-  // Принудительный тестовый режим только для администратора (#test_...)
+  // Принудительный тест конкретной модели (только для админа #test_...)
   if (forcedModel) {
-    if (forcedModel === 'compound') {
+    const groqMap = {
+      '120b': 'openai/gpt-oss-120b',
+      'llama70': 'llama-3.3-70b-versatile',
+      'qwen': 'qwen/qwen3.8-27b',
+      'scout': 'meta-llama/llama-4-scout-17b-16e-instruct',
+    };
+    if (groqMap[forcedModel]) {
+      const mName = groqMap[forcedModel];
       const text = await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
         env.GROQ_API_KEY,
-        'groq/compound-mini',
+        mName,
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(14000),
+        getTimeout(11000),
         2100
       );
-      return { text, modelUsed: 'groq/compound-mini (тест)' };
-    }
-    if (forcedModel === '120b') {
-      const text = await callOpenAICompatibleAPI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        env.GROQ_API_KEY,
-        'openai/gpt-oss-120b',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(10000),
-        2100
-      );
-      return { text, modelUsed: 'openai/gpt-oss-120b (тест)' };
+      return { text, modelUsed: `${mName} (тест)` };
     }
     if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
       const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
@@ -672,7 +660,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(14000)
+        getTimeout(13000)
       );
       return { text, modelUsed: `${gName} (тест)` };
     }
@@ -692,66 +680,40 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Обычный рабочий режим:
-  if (!hasLiveSearch && env.GROQ_API_KEY && Date.now() < deadline - 4000) {
-    try {
-      const text = await callOpenAICompatibleAPI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        env.GROQ_API_KEY,
-        'groq/compound-mini',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(13000),
-        2100
-      );
-      return { text, modelUsed: 'groq/compound-mini' };
-    } catch (err) {
-      console.warn('groq/compound-mini failed:', err.message);
-      errors.push(`CompoundMini: ${err.message}`);
-    }
-  }
+  // Основная цепочка Groq (основная + 3 открытые запасные модели)
+  if (env.GROQ_API_KEY) {
+    const groqTextModels = [
+      'openai/gpt-oss-120b',
+      'llama-3.3-70b-versatile',
+      'qwen/qwen3.8-27b',
+      'meta-llama/llama-4-scout-17b-16e-instruct',
+    ];
 
-  if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
-    try {
-      const text = await callOpenAICompatibleAPI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        env.GROQ_API_KEY,
-        'openai/gpt-oss-120b',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(8500),
-        2100
-      );
-      return { text, modelUsed: 'openai/gpt-oss-120b' };
-    } catch (err) {
-      console.warn('gpt-oss-120b failed:', err.message);
-      errors.push(`Groq120B: ${err.message}`);
-
-      if (Date.now() < deadline - 3000) {
-        try {
-          const text = await callOpenAICompatibleAPI(
-            'https://api.groq.com/openai/v1/chat/completions',
-            env.GROQ_API_KEY,
-            'groq/compound-mini',
-            fullSystemPrompt,
-            userPromptText,
-            null,
-            getTimeout(11000),
-            2100
-          );
-          return { text, modelUsed: 'groq/compound-mini (резерв)' };
-        } catch (err2) {
-          errors.push(`CompoundBackup: ${err2.message}`);
-        }
+    for (const gModel of groqTextModels) {
+      if (Date.now() > deadline - 2500) break;
+      try {
+        const text = await callOpenAICompatibleAPI(
+          'https://api.groq.com/openai/v1/chat/completions',
+          env.GROQ_API_KEY,
+          gModel,
+          fullSystemPrompt,
+          userPromptText,
+          null,
+          getTimeout(8000),
+          2100
+        );
+        return { text, modelUsed: gModel };
+      } catch (err) {
+        console.warn(`Groq (${gModel}) failed:`, err.message);
+        errors.push(`${gModel}: ${err.message}`);
       }
     }
   }
 
+  // Запасные модели Google Gemini
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
-      if (Date.now() > deadline - 3000) break;
+      if (Date.now() > deadline - 2500) break;
       try {
         const text = await callGeminiSingleModel(
           env.GEMINI_API_KEY,
@@ -769,6 +731,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
+  // Запасной xAI Grok (только если добавлен реальный ключ console.x.ai)
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
   if (grokKey && Date.now() < deadline - 2500) {
     try {
