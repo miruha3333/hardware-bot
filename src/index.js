@@ -330,12 +330,12 @@ async function processHardwareAnalysis(message, user, env) {
     return;
   }
 
-  // Секретные админ-теги для проверки качества любой модели:
-  // #test_120b, #test_cerebras, #test_llama70, #test_mistral, #test_gemini35, #test_gemini36, #test_grok
+  // Секретные админ-теги для проверки качества моделей:
+  // #test_120b, #test_cf120b, #test_cf70b, #test_mistral, #test_gemini35, #test_gemini36
   let forcedModel = '';
   if (isAdmin && rawTextInput) {
     const tagMatch = rawTextInput.match(
-      /#test_(120b|cerebras|llama70|mistral|gemini35|gemini36|grok)\b/i
+      /#test_(120b|cf120b|cf70b|mistral|gemini35|gemini36)\b/i
     );
     if (tagMatch) {
       forcedModel = tagMatch[1].toLowerCase();
@@ -343,7 +343,7 @@ async function processHardwareAnalysis(message, user, env) {
   }
   const textInput = forcedModel
     ? rawTextInput
-        .replace(/#test_(120b|cerebras|llama70|mistral|gemini35|gemini36|grok)\b/gi, '')
+        .replace(/#test_(120b|cf120b|cf70b|mistral|gemini35|gemini36)\b/gi, '')
         .trim()
     : rawTextInput;
 
@@ -443,7 +443,7 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА (GROQ QWEN -> MISTRAL -> GEMINI)
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
 // ==========================================
 async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
@@ -475,7 +475,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     }
   }
 
-  // 2. Запасной Mistral Vision (mistral-small-latest, 500K TPM!)
+  // 2. Запасной Mistral Vision (mistral-small-latest)
   if (!rawText && env.MISTRAL_API_KEY && Date.now() < deadline - 8000) {
     try {
       rawText = await callOpenAICompatibleAPI(
@@ -495,7 +495,35 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     }
   }
 
-  // 3. Запасной Gemini
+  // 3. Запасной Cloudflare Workers AI (Llama 4 Scout Vision)
+  if (!rawText && env.AI && Date.now() < deadline - 7000) {
+    try {
+      const cfRes = await env.AI.run('@cf/meta/llama-4-scout-17b-16e-instruct', {
+        messages: [
+          { role: 'system', content: ocrSystem },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: ocrPrompt },
+              {
+                type: 'image_url',
+                image_url: { url: `data:${imageInfo.mimeType};base64,${imageInfo.base64}` },
+              },
+            ],
+          },
+        ],
+        max_tokens: 700,
+        temperature: 0.2,
+      });
+      rawText = extractCloudflareText(cfRes);
+      if (rawText) console.log('OCR success via Cloudflare Llama 4 Scout');
+    } catch (err) {
+      console.warn('Cloudflare OCR failed:', err.message);
+      ocrErrors.push(`CF_OCR: ${err.message}`);
+    }
+  }
+
+  // 4. Запасной Gemini
   if (!rawText && env.GEMINI_API_KEY) {
     for (const gModel of GEMINI_MODELS) {
       if (Date.now() > deadline - 7000) break;
@@ -647,47 +675,42 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
 
   // Принудительный тест конкретной модели (только для админа #test_...)
   if (forcedModel) {
-    if (forcedModel === '120b' || forcedModel === 'llama70') {
-      const mName = forcedModel === '120b' ? 'openai/gpt-oss-120b' : 'llama-3.3-70b-versatile';
+    if (forcedModel === '120b') {
       const text = await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
         env.GROQ_API_KEY,
-        mName,
+        'openai/gpt-oss-120b',
         fullSystemPrompt,
         userPromptText,
         null,
         getTimeout(11000),
         2100
       );
-      return { text, modelUsed: `Groq ${mName} (тест)` };
+      return { text, modelUsed: 'Groq gpt-oss-120b (тест)' };
     }
-    if (forcedModel === 'cerebras') {
-      if (!env.CEREBRAS_API_KEY) throw new Error('Не задан ключ CEREBRAS_API_KEY в Cloudflare');
-      const text = await callOpenAICompatibleAPI(
-        'https://api.cerebras.ai/v1/chat/completions',
-        env.CEREBRAS_API_KEY,
-        'gpt-oss-120b',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(10000),
-        2100
-      );
-      return { text, modelUsed: 'Cerebras gpt-oss-120b (тест)' };
+    if (forcedModel === 'cf120b') {
+      if (!env.AI) throw new Error('Не добавлен Binding Workers AI (имя: AI) в Cloudflare Settings');
+      const text = await callCloudflareGPT120B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI gpt-oss-120b (тест)' };
+    }
+    if (forcedModel === 'cf70b') {
+      if (!env.AI) throw new Error('Не добавлен Binding Workers AI (имя: AI) в Cloudflare Settings');
+      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B (тест)' };
     }
     if (forcedModel === 'mistral') {
       if (!env.MISTRAL_API_KEY) throw new Error('Не задан ключ MISTRAL_API_KEY в Cloudflare');
       const text = await callOpenAICompatibleAPI(
         'https://api.mistral.ai/v1/chat/completions',
         env.MISTRAL_API_KEY,
-        'mistral-large-latest',
+        'mistral-small-latest',
         fullSystemPrompt,
         userPromptText,
         null,
         getTimeout(12000),
         2100
       );
-      return { text, modelUsed: 'Mistral large-latest (тест)' };
+      return { text, modelUsed: 'Mistral small-latest (тест)' };
     }
     if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
       const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
@@ -701,87 +724,71 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
       );
       return { text, modelUsed: `${gName} (тест)` };
     }
-    if (forcedModel === 'grok') {
-      const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
-      const text = await callOpenAICompatibleAPI(
-        'https://api.x.ai/v1/chat/completions',
-        grokKey,
-        'grok-4.7',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(12000),
-        2100
-      );
-      return { text, modelUsed: 'grok-4.7 (тест)' };
-    }
   }
 
-  // 1. Cerebras gpt-oss-120b (1M токенов/день бесплатно, 60K TPM!)
-  if (env.CEREBRAS_API_KEY && Date.now() < deadline - 2500) {
+  // 1. Основная модель: Groq openai/gpt-oss-120b
+  if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       const text = await callOpenAICompatibleAPI(
-        'https://api.cerebras.ai/v1/chat/completions',
-        env.CEREBRAS_API_KEY,
-        'gpt-oss-120b',
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        'openai/gpt-oss-120b',
         fullSystemPrompt,
         userPromptText,
         null,
         getTimeout(8500),
         2100
       );
-      return { text, modelUsed: 'Cerebras gpt-oss-120b' };
+      return { text, modelUsed: 'Groq gpt-oss-120b' };
     } catch (err) {
-      console.warn('Cerebras failed:', err.message);
-      errors.push(`Cerebras: ${err.message}`);
+      console.warn('Groq 120B failed:', err.message);
+      errors.push(`Groq120B: ${err.message}`);
     }
   }
 
-  // 2. Groq (120B и Llama 3.3 70B)
-  if (env.GROQ_API_KEY) {
-    const groqTextModels = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'];
-    for (const gModel of groqTextModels) {
-      if (Date.now() > deadline - 2500) break;
+  // 2. Запасной №1: Та же самая модель 120B внутри Cloudflare Workers AI (бесплатные 10K нейронов/день!)
+  if (env.AI && Date.now() < deadline - 3000) {
+    try {
+      const text = await callCloudflareGPT120B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI gpt-oss-120b' };
+    } catch (err) {
+      console.warn('CF 120B failed:', err.message);
+      errors.push(`CF120B: ${err.message}`);
+    }
+
+    // 3. Запасной №2: Cloudflare AI Llama 3.3 70B
+    if (Date.now() < deadline - 3000) {
       try {
-        const text = await callOpenAICompatibleAPI(
-          'https://api.groq.com/openai/v1/chat/completions',
-          env.GROQ_API_KEY,
-          gModel,
-          fullSystemPrompt,
-          userPromptText,
-          null,
-          getTimeout(8000),
-          2100
-        );
-        return { text, modelUsed: `Groq ${gModel}` };
+        const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
+        return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B' };
       } catch (err) {
-        console.warn(`Groq (${gModel}) failed:`, err.message);
-        errors.push(`${gModel}: ${err.message}`);
+        console.warn('CF 70B failed:', err.message);
+        errors.push(`CF70B: ${err.message}`);
       }
     }
   }
 
-  // 3. Mistral (1B токенов/мес бесплатно)
+  // 4. Запасной №3: Mistral (mistral-small-latest на бесплатном тарифе)
   if (env.MISTRAL_API_KEY && Date.now() < deadline - 2500) {
     try {
       const text = await callOpenAICompatibleAPI(
         'https://api.mistral.ai/v1/chat/completions',
         env.MISTRAL_API_KEY,
-        'mistral-large-latest',
+        'mistral-small-latest',
         fullSystemPrompt,
         userPromptText,
         null,
         getTimeout(9000),
         2100
       );
-      return { text, modelUsed: 'Mistral large-latest' };
+      return { text, modelUsed: 'Mistral small-latest' };
     } catch (err) {
       console.warn('Mistral failed:', err.message);
       errors.push(`Mistral: ${err.message}`);
     }
   }
 
-  // 4. Google Gemini
+  // 5. Запасной №4: Google Gemini
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
       if (Date.now() > deadline - 2500) break;
@@ -802,27 +809,63 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // 5. xAI Grok (если будет платный ключ console.x.ai)
-  const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
-  if (grokKey && Date.now() < deadline - 2500) {
-    try {
-      const text = await callOpenAICompatibleAPI(
-        'https://api.x.ai/v1/chat/completions',
-        grokKey,
-        'grok-4.7',
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(8000),
-        2100
-      );
-      return { text, modelUsed: 'grok-4.7' };
-    } catch (err) {
-      errors.push(`Grok: ${err.message}`);
-    }
-  }
-
   throw new Error(errors.join(' | '));
+}
+
+// ==========================================
+// ВЫЗОВЫ CLOUDFLARE WORKERS AI
+// ==========================================
+async function callCloudflareGPT120B(aiBinding, systemText, userPromptText) {
+  const res = await aiBinding.run('@cf/openai/gpt-oss-120b', {
+    instructions: systemText,
+    input: userPromptText,
+    reasoning: { effort: 'low' },
+  });
+  const text = extractCloudflareText(res);
+  if (!text) throw new Error('Пустой ответ Cloudflare 120B');
+  return text;
+}
+
+async function callCloudflareLlama70B(aiBinding, systemText, userPromptText) {
+  const res = await aiBinding.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    messages: [
+      { role: 'system', content: systemText },
+      { role: 'user', content: userPromptText },
+    ],
+    max_tokens: 2100,
+    temperature: 0.3,
+  });
+  const text = extractCloudflareText(res);
+  if (!text) throw new Error('Пустой ответ Cloudflare Llama 70B');
+  return text;
+}
+
+function extractCloudflareText(res) {
+  if (!res) return '';
+  if (typeof res === 'string') return res.trim();
+  if (typeof res.output_text === 'string' && res.output_text.trim()) {
+    return res.output_text.trim();
+  }
+  if (typeof res.response === 'string' && res.response.trim()) {
+    return res.response.trim();
+  }
+  if (Array.isArray(res.output)) {
+    const parts = [];
+    for (const item of res.output) {
+      if (item.type === 'message' && Array.isArray(item.content)) {
+        for (const c of item.content) {
+          if (typeof c.text === 'string') parts.push(c.text);
+        }
+      }
+    }
+    const joined = parts.join('').trim();
+    if (joined) return joined;
+  }
+  const choiceText = res?.choices?.[0]?.message?.content;
+  if (typeof choiceText === 'string' && choiceText.trim()) {
+    return choiceText.trim();
+  }
+  return '';
 }
 
 async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, imageInfo, timeoutMs) {
@@ -898,7 +941,7 @@ async function callOpenAICompatibleAPI(
     max_tokens: maxTokens,
   };
 
-  if (model === 'openai/gpt-oss-120b' || model === 'gpt-oss-120b') {
+  if (model === 'openai/gpt-oss-120b') {
     requestBody.reasoning_effort = 'low';
   }
 
