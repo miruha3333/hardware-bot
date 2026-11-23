@@ -6,6 +6,172 @@ const GEMINI_MODELS = [
   'gemini-3.6-flash',
 ];
 
+// ==========================================
+// СЛОВАРЬ ИНТЕРФЕЙСА (UK / RU)
+// ==========================================
+const TEXTS = {
+  uk: {
+    btnCheck: '🔍 Перевірити залізо',
+    btnBalance: '💳 Мої перевірки',
+    btnLang: '🌐 Мова',
+    btnOrderPersonal: '🤝 Замовити особистий підбір',
+    btnBuyOrOrder: '💳 Оплата / Особистий підбір',
+    btnWriteAdmin: (handle) => `💬 Написати ${handle}`,
+    langSaved: '✅ Мову встановлено: <b>Українська</b>',
+    welcome: (name, bonusLine, credits) =>
+      `👋 Вітаю, <b>${name}</b>!\n\n` +
+      `Я — <b>Чесний аналізатор заліза</b>. Надішліть мені скріншот товару або текст із характеристиками ` +
+      `ноутбука, ПК чи смартфона: я простою мовою оціню залізо, покажу, що продавець приховав, ` +
+      `і перевірю відомі підводні камені моделі в мережі.\n` +
+      `${bonusLine}\n` +
+      `💳 Доступно перевірок: <b>${credits}</b>\n\n` +
+      `Натисніть <b>«🔍 Перевірити залізо»</b>, щоб почати.`,
+    bonusLine: '\n🎁 Як новому користувачеві, вам нарахована <b>1 безкоштовна перевірка</b>!\n',
+    balanceText: (credits, userId) =>
+      `💳 <b>Ваш баланс перевірок:</b> ${credits}\n` +
+      `🆔 <b>Ваш Telegram ID:</b> <code>${userId}</code>\n\n` +
+      `<b>Тарифи:</b>\n` +
+      `• ⚡ <b>10 перевірок у боті</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Особистий підбір техніки за 24 год</b> (3 найкращі варіанти від інженера) — 690 грн ($16)\n\n` +
+      `Натисніть кнопку нижче, щоб переглянути способи оплати та контакти адміністратора.`,
+    zeroCreditsText: (userId) =>
+      `😔 На вашому балансі <b>0 перевірок</b>.\n\n` +
+      `<b>Продовжити вибір без помилок:</b>\n` +
+      `• ⚡ <b>Пакет 10 перевірок</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Особистий підбір під ключ</b> (знайду 3 найкращі моделі для вас) — 690 грн ($16)\n\n` +
+      `📌 Ваш Telegram ID: <code>${userId}</code>\n` +
+      `<i>Натисніть кнопку нижче, щоб побачити способи оплати або домовитися з адміністратором.</i>`,
+    orderScreenText: (userId, adminDisplay) =>
+      `🤝 <b>Замовлення підбору або купівля перевірок</b>\n\n` +
+      `<b>Що ви можете замовити:</b>\n` +
+      `• ⚡ <b>10 перевірок у боті</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Особистий підбір під ключ (до 24 год)</b> — 690 грн ($16): вивчу ваші задачі, знайду 3 найкращі моделі у перевірених магазинах, перевірю приховані мінуси та дам інструкцію перевірки.\n\n` +
+      `<b>Доступні способи оплати:</b>\n` +
+      `• 🇺🇦 Картка / Банка Monobank (Україна)\n` +
+      `• 🪙 Криптовалюта USDT (TRC-20 / TON)\n` +
+      `• 🌍 PayPal / картка (для Європи та США)\n\n` +
+      `❗️ <i>Якщо жоден із цих способів вам не підходить (або ви знаходитесь в іншій країні) — все одно напишіть адміністратору, ми індивідуально домовимося про зручний для вас варіант оплати!</i>\n\n` +
+      `👤 Адміністратор: <b>${adminDisplay}</b>\n` +
+      `🆔 Ваш ID (натисніть, щоб скопіювати): <code>${userId}</code>`,
+    step1Task: '🛠 <b>Крок 1 з 3.</b> Для яких задач купуєте техніку?',
+    tasks: [
+      { label: '🎮 Ігри', value: 'Ігри' },
+      { label: '🎬 Монтаж і дизайн', value: 'Монтаж і дизайн' },
+      { label: '💻 Програмування', value: 'Програмування' },
+      { label: '📚 Навчання / офіс', value: 'Навчання та офіс' },
+    ],
+    askUseButtons: 'Будь ласка, оберіть задачу за допомогою кнопок вище 👆',
+    step2Budget: (task) =>
+      `✅ Обрана задача: <b>${task}</b>\n\n` +
+      `💰 <b>Крок 2 з 3.</b> Який у вас бюджет?\n` +
+      `<i>Напишіть текстом (наприклад: 30 000 грн / $800) або натисніть «Пропустити».</i>`,
+    btnSkip: '⏭ Пропустити',
+    askBudgetText: 'Напишіть бюджет текстом (наприклад: 30 000 грн / $800) або натисніть кнопку «Пропустити».',
+    step3InputWithBudget: (budget) =>
+      `✅ Бюджет: <b>${budget}</b>\n\n` +
+      `📸 <b>Крок 3 з 3.</b> Надішліть <b>СКРІНШОТ</b> товару з характеристиками ` +
+      `або вставте <b>текст / точну назву моделі</b>.`,
+    step3InputSkipped:
+      `⏭ Бюджет пропущено.\n\n` +
+      `📸 <b>Крок 3 з 3.</b> Надішліть <b>СКРІНШОТ</b> товару з характеристиками ` +
+      `або вставте <b>текст / точну назву моделі</b>.`,
+    defaultPromptMenu:
+      'Щоб почати розбір ноутбука, ПК чи смартфона, натисніть кнопку <b>«🔍 Перевірити залізо»</b> у меню нижче.',
+    needPhotoOrText:
+      'Будь ласка, надішліть <b>стиснуте фото (скріншот)</b> або <b>текст</b> із характеристиками.\n' +
+      '<i>Якщо надсилаєте картинку, переконайтеся, що вона відправлена як «Фото», а не як «Файл».</i>',
+    analyzing: '⏳ Зчитую ваші характеристики та перевіряю модель у мережі...',
+    creditsLeftLine: (rem) => `\n\n💳 **Залишилось перевірок:** ${rem}`,
+    analysisError: (reason) =>
+      '⚠️ Не вдалося завершити аналіз.\n' +
+      'Ваша перевірка <b>не списана</b>. Спробуйте ще раз трохи пізніше.\n\n' +
+      `<i>Технічна причина: ${reason}</i>`,
+    notSpecified: 'Не вказано',
+  },
+  ru: {
+    btnCheck: '🔍 Проверить железо',
+    btnBalance: '💳 Мои проверки',
+    btnLang: '🌐 Язык',
+    btnOrderPersonal: '🤝 Заказать личный подбор',
+    btnBuyOrOrder: '💳 Оплата / Личный подбор',
+    btnWriteAdmin: (handle) => `💬 Написать ${handle}`,
+    langSaved: '✅ Выбран язык: <b>Русский</b>',
+    welcome: (name, bonusLine, credits) =>
+      `👋 Привет, <b>${name}</b>!\n\n` +
+      `Я — <b>Честный анализатор железа</b>. Пришли мне скриншот товара или текст с характеристиками ` +
+      `ноутбука, ПК или смартфона: я простым языком оценю железо, покажу, что продавец скрыл, ` +
+      `и проверю известные подвохи модели в сети.\n` +
+      `${bonusLine}\n` +
+      `💳 Доступно проверок: <b>${credits}</b>\n\n` +
+      `Нажми <b>«🔍 Проверить железо»</b>, чтобы начать.`,
+    bonusLine: '\n🎁 Как новому пользователю, тебе начислена <b>1 бесплатная проверка</b>!\n',
+    balanceText: (credits, userId) =>
+      `💳 <b>Ваш баланс проверок:</b> ${credits}\n` +
+      `🆔 <b>Ваш Telegram ID:</b> <code>${userId}</code>\n\n` +
+      `<b>Тарифы:</b>\n` +
+      `• ⚡ <b>10 проверок в боте</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Личный подбор техники за 24ч</b> (3 лучших варианта от инженера) — 690 грн ($16)\n\n` +
+      `Нажмите кнопку ниже, чтобы посмотреть способы оплаты и контакты администратора.`,
+    zeroCreditsText: (userId) =>
+      `😔 На вашем балансе <b>0 проверок</b>.\n\n` +
+      `<b>Продолжить выбор без ошибок:</b>\n` +
+      `• ⚡ <b>Пакет 10 проверок</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Личный подбор под ключ</b> (найду 3 лучших модели для вас) — 690 грн ($16)\n\n` +
+      `📌 Ваш Telegram ID: <code>${userId}</code>\n` +
+      `<i>Нажмите кнопку ниже, чтобы увидеть способы оплаты или договориться с администратором.</i>`,
+    orderScreenText: (userId, adminDisplay) =>
+      `🤝 <b>Заказ личного подбора или покупка проверок</b>\n\n` +
+      `<b>Что вы можете заказать:</b>\n` +
+      `• ⚡ <b>10 проверок в боте</b> — 149 грн ($3.5)\n` +
+      `• 🤝 <b>Личный подбор под ключ (до 24 ч)</b> — 690 грн ($16): изучу ваши задачи, найду 3 лучшие модели в проверенных магазинах, проверю скрытые минусы и дам инструкцию проверки.\n\n` +
+      `<b>Доступные способы оплаты:</b>\n` +
+      `• 🇺🇦 Карта / Банка Monobank (Украина)\n` +
+      `• 🪙 Криптовалюта USDT (TRC-20 / TON)\n` +
+      `• 🌍 PayPal / карта (для Европы и США)\n\n` +
+      `❗️ <i>Если ни один из этих способов вам не подходит (или вы находитесь в другой стране) — всё равно напишите администратору, мы индивидуально договоримся об удобном для вас варианте оплаты!</i>\n\n` +
+      `👤 Администратор: <b>${adminDisplay}</b>\n` +
+      `🆔 Ваш ID (нажмите, чтобы скопировать): <code>${userId}</code>`,
+    step1Task: '🛠 <b>Шаг 1 из 3.</b> Для каких задач берете технику?',
+    tasks: [
+      { label: '🎮 Игры', value: 'Игры' },
+      { label: '🎬 Монтаж и дизайн', value: 'Монтаж и дизайн' },
+      { label: '💻 Программирование', value: 'Программирование' },
+      { label: '📚 Учеба / офис', value: 'Учеба и офис' },
+    ],
+    askUseButtons: 'Пожалуйста, выберите задачу с помощью кнопок выше 👆',
+    step2Budget: (task) =>
+      `✅ Выбрана задача: <b>${task}</b>\n\n` +
+      `💰 <b>Шаг 2 из 3.</b> Какой у вас бюджет?\n` +
+      `<i>Напишите текстом (например: 30 000 грн / $800) или нажмите «Пропустить».</i>`,
+    btnSkip: '⏭ Пропустить',
+    askBudgetText: 'Напишите бюджет текстом (например: 30 000 грн / $800) или нажмите кнопку «Пропустить».',
+    step3InputWithBudget: (budget) =>
+      `✅ Бюджет: <b>${budget}</b>\n\n` +
+      `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
+      `или отправьте <b>текст / точное название модели</b>.`,
+    step3InputSkipped:
+      `⏭ Бюджет пропущен.\n\n` +
+      `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
+      `или отправьте <b>текст / точное название модели</b>.`,
+    defaultPromptMenu:
+      'Чтобы начать разбор ноутбука, ПК или смартфона, нажмите кнопку <b>«🔍 Проверить железо»</b> в меню ниже.',
+    needPhotoOrText:
+      'Пожалуйста, отправьте <b>сжатое фото (скриншот)</b> или <b>текст</b> с характеристиками.\n' +
+      '<i>Если отправляете картинку, убедитесь, что она отправлена как «Фото», а не как «Файл».</i>',
+    analyzing: '⏳ Считываю ваши характеристики и проверяю модель в сети...',
+    creditsLeftLine: (rem) => `\n\n💳 **Осталось проверок:** ${rem}`,
+    analysisError: (reason) =>
+      '⚠️ Не удалось завершить анализ.\n' +
+      'Ваша проверка <b>не списана</b>. Попробуйте ещё раз чуть позже.\n\n' +
+      `<i>Техническая причина: ${reason}</i>`,
+    notSpecified: 'Не указан',
+  },
+};
+
+function getLang(user) {
+  return user?.lang === 'uk' ? 'uk' : 'ru';
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === 'GET') {
@@ -68,78 +234,74 @@ async function handleMessage(message, env) {
 
   // --- 2. Команда /start ---
   if (text === '/start' || text.startsWith('/start ')) {
-    const isNew = await registerOrResetUser(env.DB, userId);
+    await registerOrResetUser(env.DB, userId);
     const user = await getUser(env.DB, userId);
-    const credits = user ? user.credits : 1;
 
-    const bonusLine = isNew
-      ? '\n🎁 Как новому пользователю, тебе начислена <b>1 бесплатная проверка</b>!\n'
-      : '';
+    // Если язык ещё не выбран — показываем выбор языка ДО всех остальных кнопок
+    if (!user || !user.lang) {
+      await sendLanguagePicker(env.BOT_TOKEN, chatId);
+      return;
+    }
 
+    const lang = getLang(user);
+    const t = TEXTS[lang];
     const firstName = escapeHtml(message.from?.first_name || 'друг');
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
-      `👋 Привет, <b>${firstName}</b>!\n\n` +
-        `Я — <b>Честный анализатор железа</b>. Пришли мне скриншот товара или текст с характеристиками ` +
-        `ноутбука, ПК или смартфона: я простым языком оценю железо, покажу, что продавец скрыл, ` +
-        `и проверю известные подвохи модели в сети.\n` +
-        `${bonusLine}\n` +
-        `💳 Доступно проверок: <b>${credits}</b>\n\n` +
-        `Нажми <b>«🔍 Проверить железо»</b>, чтобы начать.`,
+      t.welcome(firstName, '', user.credits ?? 1),
       {
         parse_mode: 'HTML',
-        reply_markup: getMainMenuKeyboard(),
+        reply_markup: getMainMenuKeyboard(lang),
       }
     );
+    return;
+  }
+
+  // --- 3. Смена языка ---
+  if (text === '/lang' || text === '🌐 Мова' || text === '🌐 Язык') {
+    await ensureUserExists(env.DB, userId);
+    await sendLanguagePicker(env.BOT_TOKEN, chatId);
     return;
   }
 
   await ensureUserExists(env.DB, userId);
+  const user = await getUser(env.DB, userId);
 
-  // --- 3. Кнопки главного меню ---
-  if (text === '💳 Мои проверки') {
-    await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
-    const user = await getUser(env.DB, userId);
-    const credits = user ? user.credits : 0;
-
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      `💳 <b>Ваш баланс проверок:</b> ${credits}\n` +
-        `🆔 <b>Ваш Telegram ID:</b> <code>${userId}</code>\n\n` +
-        `<b>Тарифы:</b>\n` +
-        `• ⚡ <b>10 проверок в боте</b> — 149 грн ($3.5)\n` +
-        `• 🤝 <b>Личный подбор техники за 24ч</b> (3 лучших варианта от инженера) — 690 грн ($16)\n\n` +
-        `Для оплаты и начисления напишите администратору и отправьте свой ID.`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: getAdminContactInlineKeyboard(env, '💬 Написать администратору'),
-      }
-    );
+  // Если пользователь старый и ещё не выбирал язык
+  if (!user || !user.lang) {
+    await sendLanguagePicker(env.BOT_TOKEN, chatId);
     return;
   }
 
-  if (text === '🔍 Проверить железо') {
-    const user = await getUser(env.DB, userId);
-    const credits = user ? user.credits : 0;
+  const lang = getLang(user);
+  const t = TEXTS[lang];
+
+  // --- 4. Кнопки главного меню ---
+  if (text === '💳 Мои проверки' || text === '💳 Мої перевірки') {
+    await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
+    const credits = user.credits ?? 0;
+
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.balanceText(credits, userId), {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: t.btnBuyOrOrder, callback_data: 'show_order' }]],
+      },
+    });
+    return;
+  }
+
+  if (text === '🔍 Проверить железо' || text === '🔍 Перевірити залізо') {
+    const credits = user.credits ?? 0;
 
     if (credits <= 0) {
       await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
-      await sendTelegramMessage(
-        env.BOT_TOKEN,
-        chatId,
-        `😔 На вашем балансе <b>0 проверок</b>.\n\n` +
-          `<b>Продолжить выбор без ошибок:</b>\n` +
-          `• ⚡ <b>Пакет 10 проверок</b> — 149 грн ($3.5)\n` +
-          `• 🤝 <b>Личный подбор под ключ</b> (найду 3 лучших модели за вас) — 690 грн ($16)\n\n` +
-          `📌 Ваш Telegram ID: <code>${userId}</code>\n` +
-          `<i>Нажмите на ID, чтобы скопировать, и отправьте его администратору для оплаты.</i>`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: getAdminContactInlineKeyboard(env, '💬 Купить проверки / Подбор'),
-        }
-      );
+      await sendTelegramMessage(env.BOT_TOKEN, chatId, t.zeroCreditsText(userId), {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: t.btnBuyOrOrder, callback_data: 'show_order' }]],
+        },
+      });
       return;
     }
 
@@ -149,45 +311,28 @@ async function handleMessage(message, env) {
       temp_budget: '',
     });
 
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      '🛠 <b>Шаг 1 из 3.</b> Для каких задач берете технику?',
-      {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🎮 Игры', callback_data: 'task:Игры' }],
-            [{ text: '🎬 Монтаж и дизайн', callback_data: 'task:Монтаж и дизайн' }],
-            [{ text: '💻 Программирование', callback_data: 'task:Программирование' }],
-            [{ text: '📚 Учеба и офис', callback_data: 'task:Учеба и офис' }],
-          ],
-        },
-      }
-    );
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.step1Task, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: t.tasks.map((item) => [
+          { text: item.label, callback_data: `task:${item.value}` },
+        ]),
+      },
+    });
     return;
   }
 
-  // --- 4. Обработка шагов диалога из D1 ---
-  const user = await getUser(env.DB, userId);
-  const step = user?.step || 'idle';
+  // --- 5. Обработка шагов диалога из D1 ---
+  const step = user.step || 'idle';
 
   if (step === 'wait_task') {
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      'Пожалуйста, выберите задачу с помощью кнопок выше 👆'
-    );
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.askUseButtons);
     return;
   }
 
   if (step === 'wait_budget') {
     if (!text) {
-      await sendTelegramMessage(
-        env.BOT_TOKEN,
-        chatId,
-        'Напишите бюджет текстом (например: 40 000 грн / $1000) или нажмите кнопку «Пропустить».'
-      );
+      await sendTelegramMessage(env.BOT_TOKEN, chatId, t.askBudgetText);
       return;
     }
 
@@ -199,9 +344,7 @@ async function handleMessage(message, env) {
     await sendTelegramMessage(
       env.BOT_TOKEN,
       chatId,
-      `✅ Бюджет: <b>${escapeHtml(text)}</b>\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
-        `или отправьте <b>текст / точное название модели</b>.`,
+      t.step3InputWithBudget(escapeHtml(text)),
       { parse_mode: 'HTML' }
     );
     return;
@@ -212,15 +355,10 @@ async function handleMessage(message, env) {
     return;
   }
 
-  await sendTelegramMessage(
-    env.BOT_TOKEN,
-    chatId,
-    'Чтобы начать разбор ноутбука, ПК или смартфона, нажмите кнопку <b>«🔍 Проверить железо»</b> в меню ниже.',
-    {
-      parse_mode: 'HTML',
-      reply_markup: getMainMenuKeyboard(),
-    }
-  );
+  await sendTelegramMessage(env.BOT_TOKEN, chatId, t.defaultPromptMenu, {
+    parse_mode: 'HTML',
+    reply_markup: getMainMenuKeyboard(lang),
+  });
 }
 
 // ==========================================
@@ -237,19 +375,66 @@ async function handleCallbackQuery(callbackQuery, env) {
   if (!userId || !chatId) return;
 
   await ensureUserExists(env.DB, userId);
-  const user = await getUser(env.DB, userId);
+  let user = await getUser(env.DB, userId);
+
+  // --- Выбор языка ---
+  if (data.startsWith('set_lang:')) {
+    const chosenLang = data.slice(9) === 'uk' ? 'uk' : 'ru';
+    const isFirstLanguagePick = !user?.lang;
+
+    await env.DB.prepare('UPDATE users SET lang = ?, step = ?, temp_task = ?, temp_budget = ? WHERE user_id = ?')
+      .bind(chosenLang, 'idle', '', '', userId)
+      .run();
+
+    user = await getUser(env.DB, userId);
+    const t = TEXTS[chosenLang];
+    const firstName = escapeHtml(callbackQuery.from?.first_name || 'друг');
+
+    await editTelegramMessage(env.BOT_TOKEN, chatId, messageId, t.langSaved, {
+      parse_mode: 'HTML',
+    });
+
+    const bonusLine = isFirstLanguagePick ? t.bonusLine : '';
+    await sendTelegramMessage(
+      env.BOT_TOKEN,
+      chatId,
+      t.welcome(firstName, bonusLine, user?.credits ?? 1),
+      {
+        parse_mode: 'HTML',
+        reply_markup: getMainMenuKeyboard(chosenLang),
+      }
+    );
+    return;
+  }
+
+  const lang = getLang(user);
+  const t = TEXTS[lang];
+
+  // --- Экран заказа личного подбора и способов оплаты ---
+  if (data === 'show_order') {
+    const cleanUsername = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
+    const adminDisplay = cleanUsername ? `@${cleanUsername}` : `ID ${env.ADMIN_ID}`;
+    const contactUrl = cleanUsername
+      ? `https://t.me/${cleanUsername}`
+      : `tg://user?id=${env.ADMIN_ID}`;
+
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.orderScreenText(userId, adminDisplay), {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: t.btnWriteAdmin(adminDisplay), url: contactUrl }]],
+      },
+    });
+    return;
+  }
 
   if (data.startsWith('task:')) {
     if (!user || user.credits <= 0) {
-      await sendTelegramMessage(
-        env.BOT_TOKEN,
-        chatId,
-        `На вашем балансе 0 проверок. Ваш ID: <code>${userId}</code>`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: getAdminContactInlineKeyboard(env, '💬 Купить проверки'),
-        }
-      );
+      await sendTelegramMessage(env.BOT_TOKEN, chatId, t.zeroCreditsText(userId), {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: t.btnBuyOrOrder, callback_data: 'show_order' }]],
+        },
+      });
       return;
     }
 
@@ -263,13 +448,11 @@ async function handleCallbackQuery(callbackQuery, env) {
       env.BOT_TOKEN,
       chatId,
       messageId,
-      `✅ Выбрана задача: <b>${escapeHtml(chosenTask)}</b>\n\n` +
-        `💰 <b>Шаг 2 из 3.</b> Какой у вас бюджет?\n` +
-        `<i>Напишите текстом (например: 40 000 грн / $1000) или нажмите «Пропустить».</i>`,
+      t.step2Budget(escapeHtml(chosenTask)),
       {
         parse_mode: 'HTML',
         reply_markup: {
-          inline_keyboard: [[{ text: '⏭ Пропустить', callback_data: 'skip_budget' }]],
+          inline_keyboard: [[{ text: t.btnSkip, callback_data: 'skip_budget' }]],
         },
       }
     );
@@ -279,19 +462,32 @@ async function handleCallbackQuery(callbackQuery, env) {
   if (data === 'skip_budget') {
     await updateUserState(env.DB, userId, {
       step: 'wait_input',
-      temp_budget: 'Не указан',
+      temp_budget: t.notSpecified,
     });
 
-    await editTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      messageId,
-      `⏭ Бюджет пропущен.\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
-        `или отправьте <b>текст / точное название модели</b>.`,
-      { parse_mode: 'HTML' }
-    );
+    await editTelegramMessage(env.BOT_TOKEN, chatId, messageId, t.step3InputSkipped, {
+      parse_mode: 'HTML',
+    });
   }
+}
+
+async function sendLanguagePicker(botToken, chatId) {
+  await sendTelegramMessage(
+    botToken,
+    chatId,
+    '🌐 <b>Оберіть мову спілкування / Выберите язык общения:</b>',
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🇺🇦 Українська', callback_data: 'set_lang:uk' },
+            { text: '🇷🇺 Русский', callback_data: 'set_lang:ru' },
+          ],
+        ],
+      },
+    }
+  );
 }
 
 // ==========================================
@@ -300,18 +496,17 @@ async function handleCallbackQuery(callbackQuery, env) {
 async function processHardwareAnalysis(message, user, env) {
   const chatId = message.chat.id;
   const userId = user.user_id;
+  const lang = getLang(user);
+  const t = TEXTS[lang];
 
   if (user.credits <= 0) {
     await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      `😔 У вас 0 проверок на балансе. Ваш ID: <code>${userId}</code>`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: getAdminContactInlineKeyboard(env, '💬 Купить проверки'),
-      }
-    );
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.zeroCreditsText(userId), {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: t.btnBuyOrOrder, callback_data: 'show_order' }]],
+      },
+    });
     return;
   }
 
@@ -319,31 +514,22 @@ async function processHardwareAnalysis(message, user, env) {
   const textInput = (message.text || message.caption || '').trim();
 
   if (!hasPhoto && !textInput) {
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      'Пожалуйста, отправьте <b>сжатое фото (скриншот)</b> или <b>текст</b> с характеристиками.\n' +
-        '<i>Если отправляете картинку, убедитесь, что она отправлена как «Фото», а не как «Файл».</i>',
-      { parse_mode: 'HTML' }
-    );
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.needPhotoOrText, {
+      parse_mode: 'HTML',
+    });
     return;
   }
 
   await sendChatAction(env.BOT_TOKEN, chatId, 'typing');
-  const statusMsg = await sendTelegramMessage(
-    env.BOT_TOKEN,
-    chatId,
-    '⏳ Считываю ваши характеристики и проверяю модель в сети...'
-  );
+  const statusMsg = await sendTelegramMessage(env.BOT_TOKEN, chatId, t.analyzing);
 
-  // Потолок 26 сек (безопасный запас от лимита Cloudflare 30 сек)
   const deadline = Date.now() + 26000;
 
   try {
     let extractedSpecs = '';
     let searchQuery = '';
 
-    // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (или текста) ---
+    // --- ЭТАП 1: Извлекаем модель и спеки ---
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
@@ -361,17 +547,23 @@ async function processHardwareAnalysis(message, user, env) {
       searchQuery = textInput.split('\n')[0].replace(/https?:\/\/\S+/g, '').slice(0, 90).trim();
     }
 
-    // --- ЭТАП 2: Живой поиск в Google / интернете (Serper -> Tavily) ---
+    // --- ЭТАП 2: Живой поиск в Google / интернете ---
     let liveSearchData = '';
     if (searchQuery && Date.now() < deadline - 6000) {
       liveSearchData = await runLiveWebSearch(env, searchQuery);
       console.log('Live search chars:', liveSearchData.length);
     }
 
-    // --- ЭТАП 3: Финальный разбор ---
+    // --- ЭТАП 3: Финальный разбор на выбранном языке ---
+    const targetLangLabel =
+      lang === 'uk'
+        ? 'Українська (пиши весь звіт чистою грамотною українською мовою без русизмів!)'
+        : 'Русский';
+
     const userPromptText =
-      `Задача пользователя: ${user.temp_task || 'Не указана'}\n` +
-      `Бюджет пользователя: ${user.temp_budget || 'Не указан'}\n\n` +
+      `ЯЗЫК ОТВЕТА: ${targetLangLabel}\n` +
+      `Задача пользователя: ${user.temp_task || t.notSpecified}\n` +
+      `Бюджет пользователя: ${user.temp_budget || t.notSpecified}\n\n` +
       (textInput ? `=== ДАННЫЕ ОТ ПОЛЬЗОВАТЕЛЯ (ТЕКСТ) ===\n${textInput}\n\n` : '') +
       (extractedSpecs ? `=== ДАННЫЕ СО СКРИНШОТА ПОЛЬЗОВАТЕЛЯ ===\n${extractedSpecs}\n\n` : '') +
       (liveSearchData
@@ -404,8 +596,10 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
-    const helpKeyboard = getAdminContactInlineKeyboard(env, '🤝 Заказать личный подбор');
+    const fullAnswer = `${aiResponse}${t.creditsLeftLine(remainingCredits)}`;
+    const helpKeyboard = {
+      inline_keyboard: [[{ text: t.btnOrderPersonal, callback_data: 'show_order' }]],
+    };
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
   } catch (err) {
@@ -415,15 +609,10 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const safeReason = escapeHtml((err?.message || 'Неизвестная ошибка').slice(0, 260));
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      '⚠️ Не удалось завершить анализ.\n' +
-        'Ваша проверка <b>не списана</b>. Попробуйте ещё раз чуть позже.\n\n' +
-        `<i>Техническая причина: ${safeReason}</i>`,
-      { parse_mode: 'HTML' }
-    );
+    const safeReason = escapeHtml((err?.message || 'Unknown error').slice(0, 260));
+    await sendTelegramMessage(env.BOT_TOKEN, chatId, t.analysisError(safeReason), {
+      parse_mode: 'HTML',
+    });
   }
 }
 
@@ -494,7 +683,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
   }
 
   if (!rawText) {
-    throw new Error(`Не удалось распознать скриншот (${ocrErrors.join(' | ')})`);
+    throw new Error(`OCR failed (${ocrErrors.join(' | ')})`);
   }
 
   const match = rawText.match(/MODEL_FOR_SEARCH:\s*(.+)/i);
@@ -882,8 +1071,8 @@ async function handleAdminAdd(chatId, text, env) {
   }
 
   await env.DB.prepare(
-    `INSERT INTO users (user_id, credits, step, temp_task, temp_budget, total_checks)
-     VALUES (?, ?, 'idle', '', '', 0)
+    `INSERT INTO users (user_id, credits, step, temp_task, temp_budget, total_checks, lang)
+     VALUES (?, ?, 'idle', '', '', 0, '')
      ON CONFLICT(user_id) DO UPDATE SET credits = credits + excluded.credits`
   )
     .bind(targetUserId, amount)
@@ -896,11 +1085,13 @@ async function handleAdminAdd(chatId, text, env) {
     { parse_mode: 'HTML' }
   );
 
-  const notifyRes = await sendTelegramMessage(
-    env.BOT_TOKEN,
-    targetUserId,
-    `🎉 Вам начислено ${amount} проверок!`
-  );
+  const user = await getUser(env.DB, targetUserId);
+  const notifyMsg =
+    user?.lang === 'uk'
+      ? `🎉 Вам нараховано ${amount} перевірок!`
+      : `🎉 Вам начислено ${amount} проверок!`;
+
+  const notifyRes = await sendTelegramMessage(env.BOT_TOKEN, targetUserId, notifyMsg);
 
   if (!notifyRes.ok) {
     await sendTelegramMessage(
@@ -936,8 +1127,8 @@ async function getUser(db, userId) {
 async function ensureUserExists(db, userId) {
   await db
     .prepare(
-      `INSERT OR IGNORE INTO users (user_id, credits, step, temp_task, temp_budget, total_checks)
-       VALUES (?, 1, 'idle', '', '', 0)`
+      `INSERT OR IGNORE INTO users (user_id, credits, step, temp_task, temp_budget, total_checks, lang)
+       VALUES (?, 1, 'idle', '', '', 0, '')`
     )
     .bind(userId)
     .run();
@@ -982,21 +1173,11 @@ async function updateUserState(db, userId, fields) {
 // ==========================================
 // УТИЛИТЫ TELEGRAM API И ФОРМАТИРОВАНИЕ
 // ==========================================
-function getMainMenuKeyboard() {
+function getMainMenuKeyboard(lang) {
+  const t = TEXTS[lang] || TEXTS.ru;
   return {
-    keyboard: [[{ text: '🔍 Проверить железо' }, { text: '💳 Мои проверки' }]],
+    keyboard: [[{ text: t.btnCheck }, { text: t.btnBalance }, { text: t.btnLang }]],
     resize_keyboard: true,
-  };
-}
-
-function getAdminContactInlineKeyboard(env, buttonText) {
-  const cleanUsername = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
-  const url = cleanUsername
-    ? `https://t.me/${cleanUsername}`
-    : `tg://user?id=${env.ADMIN_ID}`;
-
-  return {
-    inline_keyboard: [[{ text: buttonText, url }]],
   };
 }
 
