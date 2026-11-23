@@ -1,9 +1,7 @@
 import { SYSTEM_PROMPT } from './prompts.js';
 import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
-// Список моделей Gemini по приоритету (сначала самая точная 3.8-flash, при лимите — запасные)
 const GEMINI_MODELS = [
-  'gemini-3.8-flash',
   'gemini-3.5-flash-lite',
   'gemini-3.6-flash',
 ];
@@ -55,7 +53,6 @@ async function handleMessage(message, env) {
   if (!userId) return;
 
   const text = (message.text || '').trim();
-  console.log('Incoming message from:', userId, 'text:', text);
 
   // --- 1. Админ-команды ---
   if (String(userId) === String(env.ADMIN_ID)) {
@@ -85,8 +82,8 @@ async function handleMessage(message, env) {
       chatId,
       `👋 Привет, <b>${firstName}</b>!\n\n` +
         `Я — <b>Честный анализатор железа</b>. Пришли мне скриншот товара или текст с характеристиками ` +
-        `ноутбука, ПК или комплектующих, и я разберу его без маркетинговой шелухи: найду урезанный TGP, ` +
-        `блёклый экран, проблемы с охлаждением и переплату.\n` +
+        `ноутбука, ПК или смартфона, и я проверю его в реальном времени по актуальным данным сети: ` +
+        `найду урезанный TGP, блёклый экран, проблемы с охлаждением и переплату.\n` +
         `${bonusLine}\n` +
         `💳 Доступно проверок: <b>${credits}</b>\n\n` +
         `Нажми <b>«🔍 Проверить железо»</b>, чтобы начать.`,
@@ -111,7 +108,10 @@ async function handleMessage(message, env) {
       chatId,
       `💳 <b>Ваш баланс проверок:</b> ${credits}\n` +
         `🆔 <b>Ваш Telegram ID:</b> <code>${userId}</code>\n\n` +
-        `Для покупки пакета проверок или заказа персонального подбора техники напишите администратору и отправьте свой ID.`,
+        `<b>Тарифы:</b>\n` +
+        `• ⚡ <b>10 проверок в боте</b> — 149 грн ($3.5)\n` +
+        `• 🤝 <b>Личный подбор техники за 24ч</b> (3 лучших варианта от инженера) — 690 грн ($16)\n\n` +
+        `Для оплаты и начисления напишите администратору и отправьте свой ID.`,
       {
         parse_mode: 'HTML',
         reply_markup: getAdminContactInlineKeyboard(env, '💬 Написать администратору'),
@@ -126,17 +126,15 @@ async function handleMessage(message, env) {
 
     if (credits <= 0) {
       await updateUserState(env.DB, userId, { step: 'idle', temp_task: '', temp_budget: '' });
-      const adminNick = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
-      const adminTag = adminNick ? `\n💬 Администратор: @${adminNick}` : '';
-
       await sendTelegramMessage(
         env.BOT_TOKEN,
         chatId,
         `😔 На вашем балансе <b>0 проверок</b>.\n\n` +
-          `Вы можете приобрести пакет проверок (например, 10 штук) или заказать персональный подбор техники.\n\n` +
-          `📌 Ваш Telegram ID: <code>${userId}</code>` +
-          `${adminTag}\n` +
-          `<i>Нажмите на ID, чтобы скопировать, и отправьте его администратору после оплаты.</i>`,
+          `<b>Продолжить выбор без ошибок:</b>\n` +
+          `• ⚡ <b>Пакет 10 проверок</b> — 149 грн ($3.5)\n` +
+          `• 🤝 <b>Личный подбор под ключ</b> (найду 3 лучших модели за вас) — 690 грн ($16)\n\n` +
+          `📌 Ваш Telegram ID: <code>${userId}</code>\n` +
+          `<i>Нажмите на ID, чтобы скопировать, и отправьте его администратору для оплаты.</i>`,
         {
           parse_mode: 'HTML',
           reply_markup: getAdminContactInlineKeyboard(env, '💬 Купить проверки / Подбор'),
@@ -202,8 +200,8 @@ async function handleMessage(message, env) {
       env.BOT_TOKEN,
       chatId,
       `✅ Бюджет: <b>${escapeHtml(text)}</b>\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара (лучше с ценой и максимумом параметров) ` +
-        `или просто <b>скопируйте и вставьте полный текст характеристик</b> со страницы магазина — так разбор будет максимально точным!`,
+        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
+        `или отправьте <b>текст / точное название модели</b>.`,
       { parse_mode: 'HTML' }
     );
     return;
@@ -217,7 +215,7 @@ async function handleMessage(message, env) {
   await sendTelegramMessage(
     env.BOT_TOKEN,
     chatId,
-    'Чтобы начать разбор ноутбука или ПК, нажмите кнопку <b>«🔍 Проверить железо»</b> в меню ниже.',
+    'Чтобы начать разбор ноутбука, ПК или смартфона, нажмите кнопку <b>«🔍 Проверить железо»</b> в меню ниже.',
     {
       parse_mode: 'HTML',
       reply_markup: getMainMenuKeyboard(),
@@ -289,15 +287,15 @@ async function handleCallbackQuery(callbackQuery, env) {
       chatId,
       messageId,
       `⏭ Бюджет пропущен.\n\n` +
-        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара (лучше с ценой и максимумом параметров) ` +
-        `или просто <b>скопируйте и вставьте полный текст характеристик</b> со страницы магазина — так разбор будет максимально точным!`,
+        `📸 <b>Шаг 3 из 3.</b> Пришлите <b>СКРИНШОТ</b> товара с характеристиками ` +
+        `или отправьте <b>текст / точное название модели</b>.`,
       { parse_mode: 'HTML' }
     );
   }
 }
 
 // ==========================================
-// АНАЛИЗ ЖЕЛЕЗА (GEMINI + ДВУХШАГОВЫЙ GROQ + GROK)
+// ГЛАВНЫЙ КОНВЕЙЕР АНАЛИЗА С ЖИВЫМ ПОИСКОМ
 // ==========================================
 async function processHardwareAnalysis(message, user, env) {
   const chatId = message.chat.id;
@@ -331,52 +329,61 @@ async function processHardwareAnalysis(message, user, env) {
     return;
   }
 
-  // Если пользователь прислал только ссылку на сайт — просим скрин или текст (проверка не сгорает)
-  if (!hasPhoto && /^https?:\/\/\S+$/i.test(textInput)) {
-    await sendTelegramMessage(
-      env.BOT_TOKEN,
-      chatId,
-      '🔗 Сайты магазинов защищены от автоматического чтения ссылок.\n\n' +
-        'Пожалуйста, сделайте <b>скриншот характеристик</b> или просто <b>скопируйте текст таблицы со страницы</b> и отправьте сюда. Ваша проверка не списана!',
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
-
   await sendChatAction(env.BOT_TOKEN, chatId, 'typing');
   const statusMsg = await sendTelegramMessage(
     env.BOT_TOKEN,
     chatId,
-    '⏳ Анализирую характеристики и проверяю скрытые подвохи...'
+    '⏳ Считываю модель и проверяю реальные характеристики в сети...'
   );
 
-  // Общий потолок 26 сек (запас от 30-секундного лимита Cloudflare ctx.waitUntil)
+  // Потолок 26 сек (безопасный запас от лимита Cloudflare 30 сек)
   const deadline = Date.now() + 26000;
 
   try {
-    let imageInfo = null;
+    let extractedSpecs = '';
+    let searchQuery = '';
 
+    // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (или текста) ---
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 500000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 250000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
-      imageInfo = await downloadTelegramPhotoAsBase64(env.BOT_TOKEN, chosenPhoto.file_id);
+      const imageInfo = await downloadTelegramPhotoAsBase64(env.BOT_TOKEN, chosenPhoto.file_id);
+      const ocrResult = await extractSpecsFromImage(env, imageInfo, deadline);
+
+      extractedSpecs = ocrResult.specsText;
+      searchQuery = ocrResult.modelQuery;
+      console.log('OCR extracted searchQuery:', searchQuery);
+    } else {
+      searchQuery = textInput.split('\n')[0].replace(/https?:\/\/\S+/g, '').slice(0, 90).trim();
     }
 
-    const webHint = !hasPhoto && textInput ? await optionalWebLookup(textInput) : '';
+    // --- ЭТАП 2: Живой поиск в Google / интернете (Serper -> Tavily) ---
+    let liveSearchData = '';
+    if (searchQuery && Date.now() < deadline - 6000) {
+      liveSearchData = await runLiveWebSearch(env, searchQuery);
+      console.log('Live search chars:', liveSearchData.length);
+    }
 
+    // --- ЭТАП 3: Финальный разбор на основе живых фактов ---
     const userPromptText =
       `Задача пользователя: ${user.temp_task || 'Не указана'}\n` +
       `Бюджет пользователя: ${user.temp_budget || 'Не указан'}\n\n` +
-      (textInput
-        ? `Текст / комментарий пользователя:\n${textInput}\n\n`
-        : 'Пользователь прислал скриншот без текстового описания. Изучи изображение.\n\n') +
-      (webHint ? `Дополнительная справка из сети:\n${webHint}\n` : '');
+      (textInput ? `Комментарий / текст пользователя:\n${textInput}\n\n` : '') +
+      (extractedSpecs ? `Распознанные данные со скриншота:\n${extractedSpecs}\n\n` : '') +
+      (liveSearchData
+        ? `=== ДАННЫЕ ИЗ ЖИВОГО ПОИСКА В ИНТЕРНЕТЕ (ОБЯЗАТЕЛЬНО СВЕРЬСЯ С НИМИ!) ===\n${liveSearchData}\n`
+        : 'Примечание: внешние поисковики не вернули данных; если используешь встроенный поиск — проверь факты в сети.\n');
 
-    const aiResponse = await callAIWithFallback(env, userPromptText, imageInfo, deadline);
+    const aiResponse = await generateFinalAnalysis(
+      env,
+      userPromptText,
+      Boolean(liveSearchData),
+      deadline
+    );
 
     await env.DB.prepare(
       `UPDATE users
@@ -397,9 +404,8 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const adminNick = (env.ADMIN_USERNAME || '').replace(/^@/, '').trim();
-    const adminLine = adminNick ? `\n📩 Личный подбор / связь: @${adminNick}` : '';
-    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}${adminLine}`;
+    const searchBadge = liveSearchData ? '🌐 <i>Проверено по актуальным данным в сети</i>\n\n' : '';
+    const fullAnswer = `${searchBadge}${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
     const helpKeyboard = getAdminContactInlineKeyboard(env, '🤝 Заказать личный подбор');
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
@@ -423,120 +429,261 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЦЕПОЧКА НЕЙРОСЕТЕЙ: GEMINI -> GROQ (2 ШАГА) -> GROK
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
 // ==========================================
-async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
+async function extractSpecsFromImage(env, imageInfo, deadline) {
+  const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
+  const ocrPrompt =
+    'Изучи скриншот товара.\n' +
+    'ПЕРВОЙ СТРОКОЙ строго напиши: MODEL_FOR_SEARCH: <точное название бренда, модели и артикула на латинице/оригинале, без лишних слов, например Apple MacBook Neo 2026 MHFD4>\n' +
+    'Дальше списком перепиши со скриншота ВСЕ видимые характеристики: цену, валюту, процессор, видеокарту, ОЗУ, накопитель, экран, порты, теги и описание. Ничего не придумывай и не оценивай.';
+
+  let rawText = '';
+
+  if (env.GROQ_API_KEY) {
+    try {
+      rawText = await callOpenAICompatibleAPI(
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        'qwen/qwen3.8-27b',
+        ocrSystem,
+        ocrPrompt,
+        imageInfo,
+        Math.min(7500, Math.max(3000, deadline - Date.now() - 12000))
+      );
+    } catch (err) {
+      console.warn('Groq OCR failed:', err.message);
+    }
+  }
+
+  if (!rawText && env.GEMINI_API_KEY) {
+    rawText = await callGeminiSingleModel(
+      env.GEMINI_API_KEY,
+      'gemini-3.5-flash-lite',
+      ocrSystem,
+      ocrPrompt,
+      imageInfo,
+      Math.min(7500, Math.max(3000, deadline - Date.now() - 10000))
+    );
+  }
+
+  if (!rawText) {
+    throw new Error('Не удалось распознать скриншот (проверьте ключи GROQ_API_KEY / GEMINI_API_KEY)');
+  }
+
+  const match = rawText.match(/MODEL_FOR_SEARCH:\s*(.+)/i);
+  const modelQuery = match
+    ? match[1].replace(/[*`#\[\]]/g, '').trim().slice(0, 90)
+    : rawText.split('\n')[0].replace(/[*`#]/g, '').trim().slice(0, 90);
+
+  return {
+    modelQuery,
+    specsText: rawText,
+  };
+}
+
+// ==========================================
+// ЭТАП 2: ЖИВОЙ ПОИСК В GOOGLE (SERPER / TAVILY)
+// ==========================================
+async function runLiveWebSearch(env, query) {
+  // Вариант 1: Serper.dev (настоящий Google, 2500 запросов бесплатно)
+  if (env.SERPER_API_KEY) {
+    try {
+      const [specsRes, priceRes] = await Promise.all([
+        fetchSerper(env.SERPER_API_KEY, `${query} specs ports display TGP review`),
+        fetchSerper(env.SERPER_API_KEY, `${query} характеристики цена отзывы проблемы`),
+      ]);
+      const combined = [specsRes, priceRes].filter(Boolean).join('\n---\n');
+      if (combined.trim()) {
+        return combined.slice(0, 2200);
+      }
+    } catch (err) {
+      console.warn('Serper search failed:', err.message);
+    }
+  }
+
+  // Вариант 2: Tavily (1000 запросов в месяц бесплатно)
+  if (env.TAVILY_API_KEY) {
+    try {
+      const tavilyText = await fetchTavily(
+        env.TAVILY_API_KEY,
+        `${query} specs ports display review price`
+      );
+      if (tavilyText.trim()) {
+        return tavilyText.slice(0, 2200);
+      }
+    } catch (err) {
+      console.warn('Tavily search failed:', err.message);
+    }
+  }
+
+  return '';
+}
+
+async function fetchSerper(apiKey, q) {
+  const res = await fetch('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: {
+      'X-API-KEY': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ q, num: 5 }),
+    signal: AbortSignal.timeout(3500),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Serper HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const lines = [];
+
+  if (data.answerBox?.answer || data.answerBox?.snippet) {
+    lines.push(`Быстрый факт Google: ${data.answerBox.answer || data.answerBox.snippet}`);
+  }
+  if (data.knowledgeGraph?.description) {
+    lines.push(`Карточка Google: ${data.knowledgeGraph.description}`);
+  }
+  if (Array.isArray(data.organic)) {
+    for (const item of data.organic.slice(0, 4)) {
+      if (item.title || item.snippet) {
+        lines.push(`• ${item.title}: ${item.snippet || ''}`);
+      }
+    }
+  }
+  return lines.join('\n');
+}
+
+async function fetchTavily(apiKey, query) {
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: 'basic',
+      max_results: 5,
+      include_answer: true,
+    }),
+    signal: AbortSignal.timeout(4000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Tavily HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const lines = [];
+  if (data.answer) {
+    lines.push(`Сводка Tavily: ${data.answer}`);
+  }
+  if (Array.isArray(data.results)) {
+    for (const r of data.results.slice(0, 4)) {
+      lines.push(`• ${r.title}: ${(r.content || '').slice(0, 320)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// ==========================================
+// ЭТАП 3: ФИНАЛЬНЫЙ ИНЖЕНЕРНЫЙ АНАЛИЗ
+// ==========================================
+async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadline) {
   const errors = [];
   const today = new Date().toISOString().slice(0, 10);
   const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
 
-  const hasGroq = Boolean(env.GROQ_API_KEY);
-  const hasGrok = Boolean(env.GROK_API_KEY || env.XAI_API_KEY);
-  const hasBackup = hasGroq || hasGrok;
-  // По умолчанию быстрый режим без долгого Google Search, чтобы Gemini 3.8 Flash не вылетала по таймауту.
-  // При желании можно включить поиск переменной ENABLE_GOOGLE_SEARCH = true в Cloudflare.
-  const useGoogleSearch = env.ENABLE_GOOGLE_SEARCH === 'true';
+  const getTimeout = (maxMs = 9500) => Math.max(3000, Math.min(maxMs, deadline - Date.now() - 800));
 
-  // 1. Пробуем Gemini: сначала 3.8-flash (до 11.5с), затем быструю 3.5-flash-lite (до 7.5с)
+  // Если живого Google-поиска (Serper/Tavily) ещё нет, но есть Groq —
+  // сразу пускаем встроенный поисковый агент groq/compound-mini (70K TPM, сам гуглит!)
+  if (!hasLiveSearch && env.GROQ_API_KEY && Date.now() < deadline - 4000) {
+    try {
+      console.log('Using groq/compound-mini built-in web search');
+      return await callOpenAICompatibleAPI(
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        'groq/compound-mini',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(13000)
+      );
+    } catch (err) {
+      console.warn('groq/compound-mini failed:', err.message);
+      errors.push(`CompoundMini: ${err.message}`);
+    }
+  }
+
+  // Если свежие факты из Google (Serper/Tavily) уже собраны — отдаём их умной модели 120B (отвечает за 1.5 сек!)
+  if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
+    try {
+      return await callOpenAICompatibleAPI(
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        'openai/gpt-oss-120b',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(8000)
+      );
+    } catch (err) {
+      console.warn('gpt-oss-120b failed:', err.message);
+      errors.push(`Groq120B: ${err.message}`);
+
+      // Если вдруг запрос перешагнул лимит 8K TPM (HTTP 413) — страхуемся через compound-mini (70K TPM!)
+      if (Date.now() < deadline - 3000) {
+        try {
+          return await callOpenAICompatibleAPI(
+            'https://api.groq.com/openai/v1/chat/completions',
+            env.GROQ_API_KEY,
+            'groq/compound-mini',
+            fullSystemPrompt,
+            userPromptText,
+            null,
+            getTimeout(11000)
+          );
+        } catch (err2) {
+          errors.push(`CompoundBackup: ${err2.message}`);
+        }
+      }
+    }
+  }
+
+  // Запасной вариант: Gemini (огромный контекст, если серверы Google не висят)
   if (env.GEMINI_API_KEY) {
-    const modelsToTry = hasBackup ? GEMINI_MODELS.slice(0, 2) : GEMINI_MODELS;
-    const reserveForBackupMs = hasBackup ? 7000 : 1000;
-
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const model = modelsToTry[i];
-      const timeLeftForGemini = deadline - Date.now() - reserveForBackupMs;
-      if (timeLeftForGemini < 3500) break;
-
-      const capMs = i === 0 ? 11500 : 7500;
-      const attemptTimeout = Math.min(capMs, timeLeftForGemini);
+    for (const model of GEMINI_MODELS) {
+      if (Date.now() > deadline - 3000) break;
       try {
-        const result = await callGeminiSingleModel(
+        return await callGeminiSingleModel(
           env.GEMINI_API_KEY,
           model,
           fullSystemPrompt,
           userPromptText,
-          imageInfo,
-          attemptTimeout,
-          useGoogleSearch
+          null,
+          getTimeout(7000)
         );
-        console.log(`AI success: Gemini (${model}), search=${useGoogleSearch}`);
-        return result;
       } catch (err) {
         console.warn(`Gemini (${model}) failed:`, err.message);
         errors.push(`${model}: ${err.message}`);
       }
     }
-  } else {
-    errors.push('GEMINI_API_KEY не задан в Cloudflare');
   }
 
-  // 2. Запасной вариант 1: Сверхбыстрый Groq
-  if (hasGroq && Date.now() < deadline - 2500) {
-    try {
-      if (imageInfo) {
-        const ocrTimeout = Math.max(3000, Math.min(7000, deadline - Date.now() - 3500));
-        const extractedSpecs = await callOpenAICompatibleAPI(
-          'https://api.groq.com/openai/v1/chat/completions',
-          env.GROQ_API_KEY,
-          'qwen/qwen3.8-27b',
-          'Ты — точный распознаватель текста со скриншотов магазинов и объявлений. Выдавай только факты.',
-          'Внимательно перепиши со скриншота ВСЕ данные: 1) Крупный заголовок (модель и артикул в скобках, символ в символ, например 15AHP9, 7445HS); 2) ОБЯЗАТЕЛЬНО цену и валюту (например: «от 40 210 до 139 999 грн»); 3) Процессор, видеокарту, ОЗУ, накопитель, экран, вес и все теги/характеристики, которые видны на картинке.',
-          imageInfo,
-          ocrTimeout
-        );
-        console.log('Groq OCR success:', extractedSpecs.slice(0, 140));
-
-        const enrichedPrompt = `${userPromptText}\n\nРаспознанные данные со скриншота:\n${extractedSpecs}`;
-        const analysisTimeout = Math.max(3000, deadline - Date.now() - (hasGrok ? 3000 : 500));
-        const result = await callOpenAICompatibleAPI(
-          'https://api.groq.com/openai/v1/chat/completions',
-          env.GROQ_API_KEY,
-          'openai/gpt-oss-120b',
-          fullSystemPrompt,
-          enrichedPrompt,
-          null,
-          analysisTimeout
-        );
-        console.log('AI success: Groq (qwen OCR + gpt-oss-120b)');
-        return result;
-      } else {
-        const timeoutMs = Math.max(3000, deadline - Date.now() - (hasGrok ? 3000 : 500));
-        const result = await callOpenAICompatibleAPI(
-          'https://api.groq.com/openai/v1/chat/completions',
-          env.GROQ_API_KEY,
-          'openai/gpt-oss-120b',
-          fullSystemPrompt,
-          userPromptText,
-          null,
-          timeoutMs
-        );
-        console.log('AI success: Groq (gpt-oss-120b text)');
-        return result;
-      }
-    } catch (err) {
-      console.warn('Groq failed:', err.message);
-      errors.push(`Groq: ${err.message}`);
-    }
-  }
-
-  // 3. Запасной вариант 2: xAI Grok (console.x.ai)
+  // Запасной вариант: xAI Grok
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
-  if (grokKey && Date.now() < deadline - 2000) {
+  if (grokKey && Date.now() < deadline - 2500) {
     try {
-      const timeoutMs = Math.max(3000, deadline - Date.now() - 500);
-      const result = await callOpenAICompatibleAPI(
+      return await callOpenAICompatibleAPI(
         'https://api.x.ai/v1/chat/completions',
         grokKey,
         'grok-4.7',
         fullSystemPrompt,
         userPromptText,
-        imageInfo,
-        timeoutMs
+        null,
+        getTimeout(8000)
       );
-      console.log('AI success: xAI Grok');
-      return result;
     } catch (err) {
-      console.warn('xAI Grok failed:', err.message);
       errors.push(`Grok: ${err.message}`);
     }
   }
@@ -544,15 +691,7 @@ async function callAIWithFallback(env, userPromptText, imageInfo, deadline) {
   throw new Error(errors.join(' | '));
 }
 
-async function callGeminiSingleModel(
-  apiKey,
-  model,
-  systemText,
-  userPromptText,
-  imageInfo,
-  timeoutMs,
-  useSearch
-) {
+async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, imageInfo, timeoutMs) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const userParts = [{ text: userPromptText }];
@@ -565,75 +704,34 @@ async function callGeminiSingleModel(
     });
   }
 
-  const thinkingLevel = 'low';
-
   const payload = {
-    systemInstruction: {
-      parts: [{ text: systemText }],
-    },
-    contents: [
-      {
-        role: 'user',
-        parts: userParts,
-      },
-    ],
+    systemInstruction: { parts: [{ text: systemText }] },
+    contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
       temperature: 0.3,
-      thinkingConfig: {
-        thinkingLevel,
-      },
+      thinkingConfig: { thinkingLevel: 'minimal' },
     },
   };
 
-  if (useSearch) {
-    payload.tools = [{ google_search: {} }];
-  }
-
-  let response = await fetch(url, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
-  let usedSearchSuccessfully = useSearch && response.ok;
-  if (useSearch && !response.ok && response.status !== 401) {
-    const searchErr = await response.clone().text();
-    console.warn(`Google Search rejected (${response.status}), retrying without search:`, searchErr.slice(0, 120));
-    usedSearchSuccessfully = false;
-    delete payload.tools;
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(Math.min(timeoutMs, 8000)),
-    });
-  }
-
   if (!response.ok) {
     const errBody = await response.text();
-    let shortMsg = errBody;
-    try {
-      const parsed = JSON.parse(errBody);
-      shortMsg = parsed?.error?.message || errBody;
-    } catch {
-      // Оставляем как есть
-    }
-    throw new Error(`HTTP ${response.status} (${shortMsg.slice(0, 100)})`);
+    throw new Error(`HTTP ${response.status} (${errBody.slice(0, 100)})`);
   }
 
   const data = await response.json();
-  const searchQueries = data?.candidates?.[0]?.groundingMetadata?.webSearchQueries || [];
-  console.log(`Gemini (${model}) searchUsed=${usedSearchSuccessfully}, queries=${JSON.stringify(searchQueries)}`);
   const text = data?.candidates?.[0]?.content?.parts
     ?.map((p) => p.text || '')
     .join('')
     .trim();
 
-  if (!text) {
-    throw new Error('Пустой ответ модели');
-  }
-
+  if (!text) throw new Error('Пустой ответ модели');
   return text;
 }
 
@@ -651,21 +749,10 @@ async function callOpenAICompatibleAPI(
         { type: 'text', text: userPromptText },
         {
           type: 'image_url',
-          image_url: {
-            url: `data:${imageInfo.mimeType};base64,${imageInfo.base64}`,
-          },
+          image_url: { url: `data:${imageInfo.mimeType};base64,${imageInfo.base64}` },
         },
       ]
     : userPromptText;
-
-  const payload = {
-    model,
-    messages: [
-      { role: 'system', content: systemText },
-      { role: 'user', content: userContent },
-    ],
-    temperature: 0.4,
-  };
 
   const response = await fetch(endpointUrl, {
     method: 'POST',
@@ -673,7 +760,14 @@ async function callOpenAICompatibleAPI(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemText },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.35,
+    }),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
@@ -684,31 +778,8 @@ async function callOpenAICompatibleAPI(
 
   const data = await response.json();
   const text = (data?.choices?.[0]?.message?.content || '').trim();
-  if (!text) {
-    throw new Error('Пустой ответ модели');
-  }
-
+  if (!text) throw new Error('Пустой ответ модели');
   return text;
-}
-
-async function optionalWebLookup(queryText) {
-  try {
-    const cleanQuery = queryText.split('\n')[0].slice(0, 80).trim();
-    if (!cleanQuery) return '';
-
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'HardwareAnalyzerBot/1.0' },
-      signal: AbortSignal.timeout(2000),
-    });
-
-    if (!res.ok) return '';
-    const json = await res.json();
-    const abstract = (json.AbstractText || '').trim();
-    return abstract ? abstract.slice(0, 500) : '';
-  } catch {
-    return '';
-  }
 }
 
 // ==========================================
@@ -759,7 +830,7 @@ async function downloadTelegramPhotoAsBase64(botToken, fileId) {
 }
 
 // ==========================================
-// АДМИН-КОМАНДЫ
+// АДМИН-КОМАНДЫ И РАБОТА С D1
 // ==========================================
 async function handleAdminAdd(chatId, text, env) {
   const parts = text.split(/\s+/);
@@ -824,15 +895,11 @@ async function handleAdminStats(chatId, env) {
     chatId,
     `📊 <b>Статистика бота</b>\n\n` +
       `👥 Пользователей в D1: <b>${totalUsers}</b>\n` +
-      `🔍 Проведено проверок: <b>${allChecks}</b>\n` +
-      `🤖 Основная модель: <code>${GEMINI_MODELS[0]}</code>`,
+      `🔍 Проведено проверок: <b>${allChecks}</b>`,
     { parse_mode: 'HTML' }
   );
 }
 
-// ==========================================
-// РАБОТА С БАЗОЙ CLOUDFLARE D1
-// ==========================================
 async function getUser(db, userId) {
   return await db.prepare('SELECT * FROM users WHERE user_id = ?').bind(userId).first();
 }
