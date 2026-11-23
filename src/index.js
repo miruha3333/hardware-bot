@@ -82,8 +82,8 @@ async function handleMessage(message, env) {
       chatId,
       `👋 Привет, <b>${firstName}</b>!\n\n` +
         `Я — <b>Честный анализатор железа</b>. Пришли мне скриншот товара или текст с характеристиками ` +
-        `ноутбука, ПК или смартфона, и я проверю его в реальном времени по актуальным данным сети: ` +
-        `найду урезанный TGP, блёклый экран, проблемы с охлаждением и переплату.\n` +
+        `ноутбука, ПК или смартфона: я разберу указанные параметры, подсвечу, что продавец скрыл, ` +
+        `и проверю известные подвохи модели в сети.\n` +
         `${bonusLine}\n` +
         `💳 Доступно проверок: <b>${credits}</b>\n\n` +
         `Нажми <b>«🔍 Проверить железо»</b>, чтобы начать.`,
@@ -333,7 +333,7 @@ async function processHardwareAnalysis(message, user, env) {
   const statusMsg = await sendTelegramMessage(
     env.BOT_TOKEN,
     chatId,
-    '⏳ Считываю модель и проверяю реальные характеристики в сети...'
+    '⏳ Считываю ваши характеристики и проверяю модель в сети...'
   );
 
   // Потолок 26 сек (безопасный запас от лимита Cloudflare 30 сек)
@@ -346,7 +346,6 @@ async function processHardwareAnalysis(message, user, env) {
     // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (или текста) ---
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
-      // Берем версию ~800px (до 120 КБ), чтобы не перегружать vision-токены
       const chosenPhoto =
         message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 120000
           ? message.photo[message.photo.length - 2]
@@ -369,15 +368,15 @@ async function processHardwareAnalysis(message, user, env) {
       console.log('Live search chars:', liveSearchData.length);
     }
 
-    // --- ЭТАП 3: Финальный разбор на основе живых фактов ---
+    // --- ЭТАП 3: Финальный разбор (приоритет данным пользователя + оговорка для поиска) ---
     const userPromptText =
       `Задача пользователя: ${user.temp_task || 'Не указана'}\n` +
       `Бюджет пользователя: ${user.temp_budget || 'Не указан'}\n\n` +
-      (textInput ? `Комментарий / текст пользователя:\n${textInput}\n\n` : '') +
-      (extractedSpecs ? `Распознанные данные со скриншота:\n${extractedSpecs}\n\n` : '') +
+      (textInput ? `=== ДАННЫЕ ОТ ПОЛЬЗОВАТЕЛЯ (ТЕКСТ) ===\n${textInput}\n\n` : '') +
+      (extractedSpecs ? `=== ДАННЫЕ СО СКРИНШОТА ПОЛЬЗОВАТЕЛЯ ===\n${extractedSpecs}\n\n` : '') +
       (liveSearchData
-        ? `=== ДАННЫЕ ИЗ ЖИВОГО ПОИСКА В ИНТЕРНЕТЕ (ОБЯЗАТЕЛЬНО СВЕРЬСЯ С НИМИ!) ===\n${liveSearchData}\n`
-        : 'Примечание: внешние поисковики не вернули данных; если используешь встроенный поиск — проверь факты в сети.\n');
+        ? `=== ДОПОЛНИТЕЛЬНАЯ СПРАВКА ИЗ ЖИВОГО ПОИСКА (ТОЛЬКО С ОГОВОРКОЙ, НЕ ЗАМЕНЯЙ СКРИН!) ===\n${liveSearchData}\n`
+        : '=== ПОИСК В СЕТИ НЕ ВЕРНУЛ ДАННЫХ ===\nОпирайся ТОЛЬКО на данные пользователя и предупреди, что скрытые параметры неизвестны.\n');
 
     const aiResponse = await generateFinalAnalysis(
       env,
@@ -405,8 +404,7 @@ async function processHardwareAnalysis(message, user, env) {
       await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsg.result.message_id);
     }
 
-    const searchBadge = liveSearchData ? '🌐 <i>Проверено по актуальным данным в сети</i>\n\n' : '';
-    const fullAnswer = `${searchBadge}${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
+    const fullAnswer = `${aiResponse}\n\n💳 **Осталось проверок:** ${remainingCredits}`;
     const helpKeyboard = getAdminContactInlineKeyboard(env, '🤝 Заказать личный подбор');
 
     await sendLongFormattedResponse(env.BOT_TOKEN, chatId, fullAnswer, helpKeyboard);
@@ -430,7 +428,7 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА (LLAMA 4 SCOUT 30K TPM -> QWEN -> GEMINI)
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
 // ==========================================
 async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
@@ -443,7 +441,6 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrErrors = [];
 
   if (env.GROQ_API_KEY) {
-    // Сначала Llama 4 Scout (лимит 30 000 TPM!), затем Qwen 3.8
     const groqVisionModels = [
       'meta-llama/llama-4-scout-17b-16e-instruct',
       'qwen/qwen3.8-27b',
@@ -460,7 +457,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
           ocrPrompt,
           imageInfo,
           Math.min(7000, Math.max(3000, deadline - Date.now() - 10000)),
-          700 // Ограничиваем длину ответа, чтобы не съедать лимит TPM
+          700
         );
         if (rawText) {
           console.log(`OCR success via ${vModel}`);
@@ -534,7 +531,7 @@ async function runLiveWebSearch(env, query) {
     try {
       const tavilyText = await fetchTavily(
         env.TAVILY_API_KEY,
-        `${query} specs ports display review price`
+        `${query} specs display sRGB TGP battery review price`
       );
       if (tavilyText.trim()) {
         return tavilyText.slice(0, 2200);
@@ -634,7 +631,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         userPromptText,
         null,
         getTimeout(13000),
-        1800
+        2400
       );
     } catch (err) {
       console.warn('groq/compound-mini failed:', err.message);
@@ -642,7 +639,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
     }
   }
 
-  // Если свежие факты из Google уже собраны — отдаём умной модели 120B
+  // Если свежие факты из Google уже собраны — отдаём умной модели 120B (с low reasoning и 2400 токенами)
   if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       return await callOpenAICompatibleAPI(
@@ -652,8 +649,8 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(8000),
-        1800
+        getTimeout(8500),
+        2400
       );
     } catch (err) {
       console.warn('gpt-oss-120b failed:', err.message);
@@ -669,7 +666,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
             userPromptText,
             null,
             getTimeout(11000),
-            1800
+            2400
           );
         } catch (err2) {
           errors.push(`CompoundBackup: ${err2.message}`);
@@ -710,7 +707,7 @@ async function generateFinalAnalysis(env, userPromptText, hasLiveSearch, deadlin
         userPromptText,
         null,
         getTimeout(8000),
-        1800
+        2400
       );
     } catch (err) {
       errors.push(`Grok: ${err.message}`);
@@ -771,7 +768,7 @@ async function callOpenAICompatibleAPI(
   userPromptText,
   imageInfo,
   timeoutMs,
-  maxTokens = 2500
+  maxTokens = 2400
 ) {
   const userContent = imageInfo
     ? [
@@ -783,21 +780,28 @@ async function callOpenAICompatibleAPI(
       ]
     : userPromptText;
 
+  const requestBody = {
+    model,
+    messages: [
+      { role: 'system', content: systemText },
+      { role: 'user', content: userContent },
+    ],
+    temperature: 0.3,
+    max_tokens: maxTokens,
+  };
+
+  // Снижаем скрытые «размышления» у 120B, чтобы не тратить токены зря и не обрывать ответ
+  if (model === 'openai/gpt-oss-120b') {
+    requestBody.reasoning_effort = 'low';
+  }
+
   const response = await fetch(endpointUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemText },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.35,
-      max_tokens: maxTokens,
-    }),
+    body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
@@ -1056,94 +1060,4 @@ async function sendLongFormattedResponse(botToken, chatId, rawText, lastReplyMar
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
     const replyMarkup = isLast ? lastReplyMarkup : undefined;
-    const htmlChunk = formatMarkdownToSafeHtml(chunks[i]);
-
-    const res = await sendTelegramMessage(botToken, chatId, htmlChunk, {
-      parse_mode: 'HTML',
-      reply_markup: replyMarkup,
-    });
-
-    if (!res.ok) {
-      await sendTelegramMessage(botToken, chatId, chunks[i], {
-        reply_markup: replyMarkup,
-      });
-    }
-  }
-}
-
-async function sendTelegramMessage(botToken, chatId, text, extra = {}) {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        ...extra,
-      }),
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      console.error('Telegram API error:', JSON.stringify(data));
-    }
-    return data;
-  } catch (err) {
-    console.error('sendTelegramMessage error:', err);
-    return { ok: false };
-  }
-}
-
-async function editTelegramMessage(botToken, chatId, messageId, text, extra = {}) {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        ...extra,
-      }),
-    });
-    return await res.json();
-  } catch (err) {
-    console.error('editTelegramMessage error:', err);
-    return { ok: false };
-  }
-}
-
-async function deleteTelegramMessage(botToken, chatId, messageId) {
-  try {
-    await fetch(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
-    });
-  } catch {
-    // Игнорируем
-  }
-}
-
-async function sendChatAction(botToken, chatId, action) {
-  try {
-    await fetch(`https://api.telegram.org/bot${botToken}/sendChatAction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, action }),
-    });
-  } catch {
-    // Игнорируем
-  }
-}
-
-async function answerCallbackQuery(botToken, callbackQueryId) {
-  try {
-    await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_query_id: callbackQueryId }),
-    });
-  } catch {
-    // Игнорируем
-  }
-}
+    const htmlChunk = formatMarkdownToSafeHtml(chunks[i]
