@@ -331,16 +331,20 @@ async function processHardwareAnalysis(message, user, env) {
   }
 
   // Секретные админ-теги для проверки качества любой модели:
-  // #test_120b, #test_llama70, #test_qwen, #test_scout, #test_gemini35, #test_gemini36, #test_grok
+  // #test_120b, #test_cerebras, #test_llama70, #test_mistral, #test_gemini35, #test_gemini36, #test_grok
   let forcedModel = '';
   if (isAdmin && rawTextInput) {
-    const tagMatch = rawTextInput.match(/#test_(120b|llama70|qwen|scout|gemini35|gemini36|grok)\b/i);
+    const tagMatch = rawTextInput.match(
+      /#test_(120b|cerebras|llama70|mistral|gemini35|gemini36|grok)\b/i
+    );
     if (tagMatch) {
       forcedModel = tagMatch[1].toLowerCase();
     }
   }
   const textInput = forcedModel
-    ? rawTextInput.replace(/#test_(120b|llama70|qwen|scout|gemini35|gemini36|grok)\b/gi, '').trim()
+    ? rawTextInput
+        .replace(/#test_(120b|cerebras|llama70|mistral|gemini35|gemini36|grok)\b/gi, '')
+        .trim()
     : rawTextInput;
 
   await sendChatAction(env.BOT_TOKEN, chatId, 'typing');
@@ -439,7 +443,7 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА (GROQ QWEN -> MISTRAL -> GEMINI)
 // ==========================================
 async function extractSpecsFromImage(env, imageInfo, deadline) {
   const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
@@ -451,36 +455,47 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
   let rawText = '';
   const ocrErrors = [];
 
-  if (env.GROQ_API_KEY) {
-    const groqVisionModels = [
-      'meta-llama/llama-4-scout-17b-16e-instruct',
-      'qwen/qwen3.8-27b',
-    ];
-
-    for (const vModel of groqVisionModels) {
-      if (Date.now() > deadline - 10000) break;
-      try {
-        rawText = await callOpenAICompatibleAPI(
-          'https://api.groq.com/openai/v1/chat/completions',
-          env.GROQ_API_KEY,
-          vModel,
-          ocrSystem,
-          ocrPrompt,
-          imageInfo,
-          Math.min(7000, Math.max(3000, deadline - Date.now() - 10000)),
-          700
-        );
-        if (rawText) {
-          console.log(`OCR success via ${vModel}`);
-          break;
-        }
-      } catch (err) {
-        console.warn(`Groq OCR (${vModel}) failed:`, err.message);
-        ocrErrors.push(`${vModel}: ${err.message}`);
-      }
+  // 1. Groq Qwen 3.8
+  if (env.GROQ_API_KEY && Date.now() < deadline - 10000) {
+    try {
+      rawText = await callOpenAICompatibleAPI(
+        'https://api.groq.com/openai/v1/chat/completions',
+        env.GROQ_API_KEY,
+        'qwen/qwen3.8-27b',
+        ocrSystem,
+        ocrPrompt,
+        imageInfo,
+        Math.min(7000, Math.max(3000, deadline - Date.now() - 10000)),
+        700
+      );
+      if (rawText) console.log('OCR success via Groq qwen/qwen3.8-27b');
+    } catch (err) {
+      console.warn('Groq OCR failed:', err.message);
+      ocrErrors.push(`GroqQwen: ${err.message}`);
     }
   }
 
+  // 2. Запасной Mistral Vision (mistral-small-latest, 500K TPM!)
+  if (!rawText && env.MISTRAL_API_KEY && Date.now() < deadline - 8000) {
+    try {
+      rawText = await callOpenAICompatibleAPI(
+        'https://api.mistral.ai/v1/chat/completions',
+        env.MISTRAL_API_KEY,
+        'mistral-small-latest',
+        ocrSystem,
+        ocrPrompt,
+        imageInfo,
+        Math.min(7500, Math.max(3000, deadline - Date.now() - 8000)),
+        700
+      );
+      if (rawText) console.log('OCR success via Mistral mistral-small-latest');
+    } catch (err) {
+      console.warn('Mistral OCR failed:', err.message);
+      ocrErrors.push(`MistralOCR: ${err.message}`);
+    }
+  }
+
+  // 3. Запасной Gemini
   if (!rawText && env.GEMINI_API_KEY) {
     for (const gModel of GEMINI_MODELS) {
       if (Date.now() > deadline - 7000) break;
@@ -632,14 +647,8 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
 
   // Принудительный тест конкретной модели (только для админа #test_...)
   if (forcedModel) {
-    const groqMap = {
-      '120b': 'openai/gpt-oss-120b',
-      'llama70': 'llama-3.3-70b-versatile',
-      'qwen': 'qwen/qwen3.8-27b',
-      'scout': 'meta-llama/llama-4-scout-17b-16e-instruct',
-    };
-    if (groqMap[forcedModel]) {
-      const mName = groqMap[forcedModel];
+    if (forcedModel === '120b' || forcedModel === 'llama70') {
+      const mName = forcedModel === '120b' ? 'openai/gpt-oss-120b' : 'llama-3.3-70b-versatile';
       const text = await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
         env.GROQ_API_KEY,
@@ -650,7 +659,35 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
         getTimeout(11000),
         2100
       );
-      return { text, modelUsed: `${mName} (тест)` };
+      return { text, modelUsed: `Groq ${mName} (тест)` };
+    }
+    if (forcedModel === 'cerebras') {
+      if (!env.CEREBRAS_API_KEY) throw new Error('Не задан ключ CEREBRAS_API_KEY в Cloudflare');
+      const text = await callOpenAICompatibleAPI(
+        'https://api.cerebras.ai/v1/chat/completions',
+        env.CEREBRAS_API_KEY,
+        'gpt-oss-120b',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(10000),
+        2100
+      );
+      return { text, modelUsed: 'Cerebras gpt-oss-120b (тест)' };
+    }
+    if (forcedModel === 'mistral') {
+      if (!env.MISTRAL_API_KEY) throw new Error('Не задан ключ MISTRAL_API_KEY в Cloudflare');
+      const text = await callOpenAICompatibleAPI(
+        'https://api.mistral.ai/v1/chat/completions',
+        env.MISTRAL_API_KEY,
+        'mistral-large-latest',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(12000),
+        2100
+      );
+      return { text, modelUsed: 'Mistral large-latest (тест)' };
     }
     if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
       const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
@@ -680,15 +717,29 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // Основная цепочка Groq (основная + 3 открытые запасные модели)
-  if (env.GROQ_API_KEY) {
-    const groqTextModels = [
-      'openai/gpt-oss-120b',
-      'llama-3.3-70b-versatile',
-      'qwen/qwen3.8-27b',
-      'meta-llama/llama-4-scout-17b-16e-instruct',
-    ];
+  // 1. Cerebras gpt-oss-120b (1M токенов/день бесплатно, 60K TPM!)
+  if (env.CEREBRAS_API_KEY && Date.now() < deadline - 2500) {
+    try {
+      const text = await callOpenAICompatibleAPI(
+        'https://api.cerebras.ai/v1/chat/completions',
+        env.CEREBRAS_API_KEY,
+        'gpt-oss-120b',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(8500),
+        2100
+      );
+      return { text, modelUsed: 'Cerebras gpt-oss-120b' };
+    } catch (err) {
+      console.warn('Cerebras failed:', err.message);
+      errors.push(`Cerebras: ${err.message}`);
+    }
+  }
 
+  // 2. Groq (120B и Llama 3.3 70B)
+  if (env.GROQ_API_KEY) {
+    const groqTextModels = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'];
     for (const gModel of groqTextModels) {
       if (Date.now() > deadline - 2500) break;
       try {
@@ -702,7 +753,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
           getTimeout(8000),
           2100
         );
-        return { text, modelUsed: gModel };
+        return { text, modelUsed: `Groq ${gModel}` };
       } catch (err) {
         console.warn(`Groq (${gModel}) failed:`, err.message);
         errors.push(`${gModel}: ${err.message}`);
@@ -710,7 +761,27 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // Запасные модели Google Gemini
+  // 3. Mistral (1B токенов/мес бесплатно)
+  if (env.MISTRAL_API_KEY && Date.now() < deadline - 2500) {
+    try {
+      const text = await callOpenAICompatibleAPI(
+        'https://api.mistral.ai/v1/chat/completions',
+        env.MISTRAL_API_KEY,
+        'mistral-large-latest',
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(9000),
+        2100
+      );
+      return { text, modelUsed: 'Mistral large-latest' };
+    } catch (err) {
+      console.warn('Mistral failed:', err.message);
+      errors.push(`Mistral: ${err.message}`);
+    }
+  }
+
+  // 4. Google Gemini
   if (env.GEMINI_API_KEY) {
     for (const model of GEMINI_MODELS) {
       if (Date.now() > deadline - 2500) break;
@@ -731,7 +802,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // Запасной xAI Grok (только если добавлен реальный ключ console.x.ai)
+  // 5. xAI Grok (если будет платный ключ console.x.ai)
   const grokKey = env.GROK_API_KEY || env.XAI_API_KEY;
   if (grokKey && Date.now() < deadline - 2500) {
     try {
@@ -827,7 +898,7 @@ async function callOpenAICompatibleAPI(
     max_tokens: maxTokens,
   };
 
-  if (model === 'openai/gpt-oss-120b') {
+  if (model === 'openai/gpt-oss-120b' || model === 'gpt-oss-120b') {
     requestBody.reasoning_effort = 'low';
   }
 
