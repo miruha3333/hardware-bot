@@ -772,7 +772,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(13000)
+        getTimeout(18000)
       );
       return { text, modelUsed: `${gName} (тест)` };
     }
@@ -809,17 +809,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // 3. Запасной №2: Cloudflare AI gpt-oss-120b
-  if (env.AI && Date.now() < deadline - 3000) {
-    try {
-      const text = await callCloudflareGPT120B(env.AI, fullSystemPrompt, userPromptText);
-      return { text, modelUsed: 'Cloudflare AI gpt-oss-120b' };
-    } catch (err) {
-      console.warn('CF 120B failed:', err.message);
-      errors.push(`CF120B: ${err.message}`);
-    }
-  }
-
+  
   // 4. Запасной №3: Mistral (mistral-small-latest на бесплатном тарифе)
   if (env.MISTRAL_API_KEY && Date.now() < deadline - 2500) {
     try {
@@ -956,7 +946,7 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     generationConfig: {
       temperature: 0.3,
       thinkingConfig: {
-        thinkingLevel: 'low',
+        thinkingLevel: model.includes('3.8') ? 'low' : 'minimal',
       },
     },
   };
