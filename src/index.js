@@ -365,7 +365,7 @@ async function processHardwareAnalysis(message, user, env) {
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 120000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 350000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
@@ -565,12 +565,43 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
 // ==========================================
 // ЭТАП 2: ЖИВОЙ ПОИСК В GOOGLE (SERPER / TAVILY)
 // ==========================================
+function buildCleanSearchQuery(rawQuery) {
+  const cleanFull = (rawQuery || '')
+    .split('\n')[0]
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\b(Ноутбук|Ультрабук|Смартфон|Компьютер|ПК|Игровой|Модель:?|арт\.?)\b/gi, '')
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/\([^)]*\d+[^)]*\)/g, '')
+    // Вырезаем длинные региональные артикулы (8+ символов из букв и цифр без дефиса, вроде 3WHK3UK894SH или 83DX00F1PB)
+    .replace(/\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{8,}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Для поиска обзора, TGP и экрана отрезаем хвост с CPU/GPU, оставляя чистое название шасси
+  const shortModel = cleanFull
+    .split(/\s+(?=(?:RTX|GTX|RX|Ryzen|Core|Intel|AMD|Snapdragon|Helio|Dimensity|Apple)\b)/i)[0]
+    .split(' ')
+    .slice(0, 5)
+    .join(' ')
+    .trim();
+
+  return {
+    shortModel: shortModel || cleanFull.split(' ').slice(0, 4).join(' '),
+    cleanFull,
+  };
+}
+
 async function runLiveWebSearch(env, query) {
+  const { shortModel, cleanFull } = buildCleanSearchQuery(query);
+  if (!shortModel) return '';
+
+  console.log('Clean search queries -> shortModel:', shortModel, '| cleanFull:', cleanFull);
+
   if (env.SERPER_API_KEY) {
     try {
       const [specsRes, priceRes] = await Promise.all([
-        fetchSerper(env.SERPER_API_KEY, `${query} specs display sRGB TGP battery Wh cooling review`),
-        fetchSerper(env.SERPER_API_KEY, `${query} цена купить украина характеристики отзывы`),
+        fetchSerper(env.SERPER_API_KEY, `"${shortModel}" specs OR review TGP sRGB`),
+        fetchSerper(env.SERPER_API_KEY, `${cleanFull} цена украина характеристики отзывы`),
       ]);
       const combined = [specsRes, priceRes].filter(Boolean).join('\n---\n');
       if (combined.trim()) {
@@ -585,7 +616,7 @@ async function runLiveWebSearch(env, query) {
     try {
       const tavilyText = await fetchTavily(
         env.TAVILY_API_KEY,
-        `${query} specs display sRGB TGP battery review price`
+        `"${shortModel}" specs review TGP sRGB battery price`
       );
       if (tavilyText.trim()) {
         return tavilyText.slice(0, 2200);
@@ -726,7 +757,18 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // 1. Основная модель: Groq openai/gpt-oss-120b
+  // 1. Основная модель: Cloudflare AI Llama 3.3 70B (самая честная и без фантазий)
+  if (env.AI && Date.now() < deadline - 3000) {
+    try {
+      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B' };
+    } catch (err) {
+      console.warn('CF 70B failed:', err.message);
+      errors.push(`CF70B: ${err.message}`);
+    }
+  }
+
+  // 2. Запасной №1: Groq openai/gpt-oss-120b (если у Cloudflare закончились 10K нейронов/день)
   if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       const text = await callOpenAICompatibleAPI(
@@ -746,7 +788,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // 2. Запасной №1: Та же самая модель 120B внутри Cloudflare Workers AI (бесплатные 10K нейронов/день!)
+  // 3. Запасной №2: Cloudflare AI gpt-oss-120b
   if (env.AI && Date.now() < deadline - 3000) {
     try {
       const text = await callCloudflareGPT120B(env.AI, fullSystemPrompt, userPromptText);
@@ -754,17 +796,6 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     } catch (err) {
       console.warn('CF 120B failed:', err.message);
       errors.push(`CF120B: ${err.message}`);
-    }
-
-    // 3. Запасной №2: Cloudflare AI Llama 3.3 70B
-    if (Date.now() < deadline - 3000) {
-      try {
-        const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
-        return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B' };
-      } catch (err) {
-        console.warn('CF 70B failed:', err.message);
-        errors.push(`CF70B: ${err.message}`);
-      }
     }
   }
 
