@@ -877,10 +877,10 @@ async function callCloudflareLlama70B(aiBinding, systemText, userPromptText) {
         { role: 'system', content: systemText },
         { role: 'user', content: userPromptText },
       ],
-      max_tokens: 2100,
+      max_tokens: 1500,
       temperature: 0.3,
     }),
-    10000,
+    15000,
     'Cloudflare Llama 70B'
   );
   const text = extractCloudflareText(res);
