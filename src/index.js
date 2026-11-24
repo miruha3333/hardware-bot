@@ -354,8 +354,8 @@ async function processHardwareAnalysis(message, user, env) {
     '⏳ Считываю ваши характеристики и проверяю модель в сети...'
   );
 
-  // Потолок 26 сек (безопасный запас от лимита Cloudflare 30 сек)
-  const deadline = Date.now() + 26000;
+  // Потолок 28 сек (безопасный запас от лимита Cloudflare 30 сек)
+  const deadline = Date.now() + 28000;
 
   try {
     let extractedSpecs = '';
@@ -697,10 +697,31 @@ async function fetchTavily(apiKey, query) {
 // ==========================================
 // ЭТАП 3: ФИНАЛЬНЫЙ ИНЖЕНЕРНЫЙ АНАЛИЗ
 // ==========================================
+function getRelevantKnowledgeBase(text) {
+  const lower = (text || '').toLowerCase();
+  const parts = KNOWLEDGE_BASE.split(/\n(?=--- \d+\. )/);
+  if (parts.length < 4) return KNOWLEDGE_BASE;
+
+  const header = parts[0];
+  const laptops = parts[1] || '';
+  const pcParts = parts[2] || '';
+  const phones = parts[3] || '';
+
+  const isPhone = /\b(iphone|смартфон|телефон|xiaomi|redmi|poco|samsung galaxy|pixel|realme|oneplus|vivo|oppo|honor|motorola|helio|dimensity|ufs)\b/i.test(lower);
+  const isPC = /\b(сборка пк|блок питания|материнск|сокет|am4|am5|lga\s?1[1278]00|корпус|кулер|сжо|водянк)\b/i.test(lower);
+  const isLaptop = /\b(ноутбук|ультрабук|laptop|macbook|thinkpad|ideapad|loq|legion|tuf|vivobook|zenbook|nitro|predator|aspire|victus|omen|pavilion|latitude|precision|inspiron|elitebook|probook|gaming a16|tgp)\b/i.test(lower);
+
+  if (isPhone && !isLaptop && !isPC) return `${header}\n${phones}`;
+  if (isPC && !isLaptop && !isPhone) return `${header}\n${pcParts}`;
+  if (isLaptop && !isPhone && !isPC) return `${header}\n${laptops}`;
+  return KNOWLEDGE_BASE;
+}
+
 async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel = '') {
   const errors = [];
   const today = new Date().toISOString().slice(0, 10);
-  const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${KNOWLEDGE_BASE}`;
+  const relevantKB = getRelevantKnowledgeBase(userPromptText);
+  const fullSystemPrompt = `ТЕКУЩАЯ ДАТА: ${today}. Оценивай актуальность и новизну железа строго относительно этой даты.\n\n${SYSTEM_PROMPT}\n\n${relevantKB}`;
 
   const getTimeout = (maxMs = 9500) => Math.max(3000, Math.min(maxMs, deadline - Date.now() - 800));
 
@@ -862,7 +883,7 @@ async function callCloudflareGPT120B(aiBinding, systemText, userPromptText) {
       input: userPromptText,
       reasoning: { effort: 'low' },
     }),
-    12000,
+    18000,
     'Cloudflare 120B'
   );
   const text = extractCloudflareText(res);
@@ -880,7 +901,7 @@ async function callCloudflareLlama70B(aiBinding, systemText, userPromptText) {
       max_tokens: 1500,
       temperature: 0.3,
     }),
-    15000,
+    18000,
     'Cloudflare Llama 70B'
   );
   const text = extractCloudflareText(res);
@@ -934,6 +955,9 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
       temperature: 0.3,
+      thinkingConfig: {
+        thinkingLevel: 'low',
+      },
     },
   };
 
