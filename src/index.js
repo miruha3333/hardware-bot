@@ -331,7 +331,7 @@ async function processHardwareAnalysis(message, user, env) {
   }
 
   // Секретные админ-теги для проверки моделей:
-  // #test_cf70b, #test_120b, #test_cf120b, #test_mistral, #test_gemini35, #test_gemini36
+  // #test_gemini35, #test_gemini36, #test_120b, #test_cf70b, #test_cf120b, #test_mistral
   let forcedModel = '';
   if (isAdmin && rawTextInput) {
     const tagMatch = rawTextInput.match(
@@ -361,11 +361,11 @@ async function processHardwareAnalysis(message, user, env) {
     let extractedSpecs = '';
     let searchQuery = '';
 
-    // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (или текста) ---
+    // --- ЭТАП 1: Извлекаем модель и спеки со скриншота (берем четкое фото до 350 КБ!) ---
     if (hasPhoto) {
       const lastPhoto = message.photo[message.photo.length - 1];
       const chosenPhoto =
-        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 120000
+        message.photo.length >= 2 && lastPhoto.file_size && lastPhoto.file_size > 350000
           ? message.photo[message.photo.length - 2]
           : lastPhoto;
 
@@ -443,19 +443,39 @@ async function processHardwareAnalysis(message, user, env) {
 }
 
 // ==========================================
-// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА
+// ЭТАП 1: РАСПОЗНАВАНИЕ СКРИНШОТА (GEMINI 3.5 -> GROQ QWEN -> MISTRAL -> CF)
 // ==========================================
 async function extractSpecsFromImage(env, imageInfo, deadline) {
-  const ocrSystem = 'Ты — точный OCR-сканер характеристик техники со скриншотов. Выдавай только факты.';
+  const ocrSystem =
+    'Ты — сверхточный OCR-сканер характеристик техники со скриншотов. Выдавай только факты, дочитывай картинку до самого низа.';
   const ocrPrompt =
-    'Изучи скриншот товара.\n' +
-    'ПЕРВОЙ СТРОКОЙ строго напиши: MODEL_FOR_SEARCH: <ТОЛЬКО бренд, короткое название модели, короткий индекс вроде 3WH и главный GPU — БЕЗ длинных магазинных кодов вроде 3WHK3UK894SH или N6.F5.16.06S! Например: Gigabyte GAMING A16 3WH RTX 5070>\n' +
-    'Дальше списком перепиши со скриншота ВСЕ видимые характеристики (включая полный артикул, цену, валюту, процессор, видеокарту, ОЗУ, накопитель, экран, порты, теги и описание). Ничего не придумывай.';
+    'Внимательно изучи ВЕСЬ скриншот товара от верхних тегов до самого нижнего текста.\n' +
+    'ПЕРВОЙ СТРОКОЙ строго напиши: MODEL_FOR_SEARCH: <ТОЛЬКО бренд, короткое название модели, короткий индекс серии и главный GPU — БЕЗ длинных магазинных кодов вроде 3WHK3UK894SH! Например: Gigabyte GAMING A16 3WH RTX 5070>\n' +
+    'Дальше списком перепиши со скриншота АБСОЛЮТНО ВСЕ видимые характеристики и теги (не пропускай нижнюю часть картинки!): полный артикул, цену, валюту, все верхние теги (Wi-Fi, подсветка, 3D сканер лица, апгрейд и т.д.), процессор, видеокарту, ОЗУ и тип (DDR4/DDR5), накопитель, экран, частоту Гц и ЯРКОСТЬ В НИТАХ. Ничего не придумывай.';
 
   let rawText = '';
   const ocrErrors = [];
 
-  if (env.GROQ_API_KEY && Date.now() < deadline - 10000) {
+  // 1. Сначала Gemini 3.5 Flash-Lite (читает мелкий текст внизу скриншотов точнее всех!)
+  if (env.GEMINI_API_KEY && Date.now() < deadline - 12000) {
+    try {
+      rawText = await callGeminiSingleModel(
+        env.GEMINI_API_KEY,
+        'gemini-3.5-flash-lite',
+        ocrSystem,
+        ocrPrompt,
+        imageInfo,
+        Math.min(5500, Math.max(2500, deadline - Date.now() - 12000))
+      );
+      if (rawText) console.log('OCR success via gemini-3.5-flash-lite');
+    } catch (err) {
+      console.warn('Gemini 3.5 OCR failed:', err.message);
+      ocrErrors.push(`Gemini35OCR: ${err.message}`);
+    }
+  }
+
+  // 2. Запасной Groq Qwen 3.8 (увеличили лимит до 1400 токенов, чтобы не резала низ!)
+  if (!rawText && env.GROQ_API_KEY && Date.now() < deadline - 9000) {
     try {
       rawText = await callOpenAICompatibleAPI(
         'https://api.groq.com/openai/v1/chat/completions',
@@ -464,8 +484,8 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
         ocrSystem,
         ocrPrompt,
         imageInfo,
-        Math.min(7000, Math.max(3000, deadline - Date.now() - 10000)),
-        700
+        Math.min(7000, Math.max(3000, deadline - Date.now() - 9000)),
+        1400
       );
       if (rawText) console.log('OCR success via Groq qwen/qwen3.8-27b');
     } catch (err) {
@@ -474,6 +494,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     }
   }
 
+  // 3. Запасной Mistral Vision
   if (!rawText && env.MISTRAL_API_KEY && Date.now() < deadline - 8000) {
     try {
       rawText = await callOpenAICompatibleAPI(
@@ -483,8 +504,8 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
         ocrSystem,
         ocrPrompt,
         imageInfo,
-        Math.min(7500, Math.max(3000, deadline - Date.now() - 8000)),
-        700
+        Math.min(7000, Math.max(3000, deadline - Date.now() - 8000)),
+        1200
       );
       if (rawText) console.log('OCR success via Mistral mistral-small-latest');
     } catch (err) {
@@ -493,6 +514,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     }
   }
 
+  // 4. Запасной Cloudflare Llama 4 Scout
   if (!rawText && env.AI && Date.now() < deadline - 7000) {
     try {
       const cfRes = await runWithTimeout(
@@ -510,7 +532,7 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
               ],
             },
           ],
-          max_tokens: 700,
+          max_tokens: 1200,
           temperature: 0.2,
         }),
         8000,
@@ -521,29 +543,6 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
     } catch (err) {
       console.warn('Cloudflare OCR failed:', err.message);
       ocrErrors.push(`CF_OCR: ${err.message}`);
-    }
-  }
-
-  if (!rawText && env.GEMINI_API_KEY) {
-    for (const gModel of GEMINI_MODELS) {
-      if (Date.now() > deadline - 7000) break;
-      try {
-        rawText = await callGeminiSingleModel(
-          env.GEMINI_API_KEY,
-          gModel,
-          ocrSystem,
-          ocrPrompt,
-          imageInfo,
-          Math.min(7000, Math.max(3000, deadline - Date.now() - 7000))
-        );
-        if (rawText) {
-          console.log(`OCR success via ${gModel}`);
-          break;
-        }
-      } catch (err) {
-        console.warn(`Gemini OCR (${gModel}) failed:`, err.message);
-        ocrErrors.push(`${gModel}: ${err.message}`);
-      }
     }
   }
 
@@ -563,10 +562,9 @@ async function extractSpecsFromImage(env, imageInfo, deadline) {
 }
 
 // ==========================================
-// ЭТАП 2: ЖИВОЙ ПОИСК В GOOGLE С АВТО-ОЧИСТКОЙ АРТИКУЛА
+// ЭТАП 2: ЖИВОЙ ПОИСК В GOOGLE (КОРОТКИЙ ТОЧНЫЙ ЗАПРОС)
 // ==========================================
 async function runLiveWebSearch(env, query) {
-  // Автоматически вырезаем длинные магазинные коды (типа 3WHK3UK894SH или N6.F5.16.06S), которые портят поиск
   const cleanShortQuery =
     query
       .split(/\s+/)
@@ -577,18 +575,17 @@ async function runLiveWebSearch(env, query) {
   if (env.SERPER_API_KEY) {
     try {
       let [specsRes, priceRes] = await Promise.all([
-        fetchSerper(env.SERPER_API_KEY, `${cleanShortQuery} specs display sRGB TGP battery review`),
-        fetchSerper(env.SERPER_API_KEY, `${cleanShortQuery} цена купить украина характеристики отзывы`),
+        fetchSerper(env.SERPER_API_KEY, `${cleanShortQuery} review specs display battery TGP`),
+        fetchSerper(env.SERPER_API_KEY, `${cleanShortQuery} цена в Украине купить`),
       ]);
 
-      // Если всё равно пусто — ищем по первым 3 словам (бренд + серия)
       if (!specsRes && !priceRes) {
         const fallbackQuery = cleanShortQuery.split(/\s+/).slice(0, 3).join(' ');
         if (fallbackQuery && fallbackQuery !== cleanShortQuery) {
           console.log('Retrying Serper with short query:', fallbackQuery);
           [specsRes, priceRes] = await Promise.all([
-            fetchSerper(env.SERPER_API_KEY, `${fallbackQuery} specs display sRGB TGP battery review`),
-            fetchSerper(env.SERPER_API_KEY, `${fallbackQuery} цена характеристики отзывы`),
+            fetchSerper(env.SERPER_API_KEY, `${fallbackQuery} review specs display battery TGP`),
+            fetchSerper(env.SERPER_API_KEY, `${fallbackQuery} цена характеристики`),
           ]);
         }
       }
@@ -606,7 +603,7 @@ async function runLiveWebSearch(env, query) {
     try {
       const tavilyText = await fetchTavily(
         env.TAVILY_API_KEY,
-        `${cleanShortQuery} specs display sRGB TGP battery review price`
+        `${cleanShortQuery} review specs display battery TGP price`
       );
       if (tavilyText.trim()) {
         return tavilyText.slice(0, 2200);
@@ -685,7 +682,7 @@ async function fetchTavily(apiKey, query) {
 }
 
 // ==========================================
-// ЭТАП 3: ФИНАЛЬНЫЙ ИНЖЕНЕРНЫЙ АНАЛИЗ (LLAMA-3.3-70B №1 -> GROQ 120B -> GEMINI -> MISTRAL)
+// ЭТАП 3: ФИНАЛЬНЫЙ АНАЛИЗ (GEMINI 3.5/3.6 -> GROQ 120B -> CLOUDFLARE 70B)
 // ==========================================
 async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel = '') {
   const errors = [];
@@ -696,10 +693,17 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
 
   // Тестовые теги для админа
   if (forcedModel) {
-    if (forcedModel === 'cf70b') {
-      if (!env.AI) throw new Error('Не добавлен Binding Workers AI (имя: AI)');
-      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
-      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B (тест)' };
+    if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
+      const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
+      const text = await callGeminiSingleModel(
+        env.GEMINI_API_KEY,
+        gName,
+        fullSystemPrompt,
+        userPromptText,
+        null,
+        getTimeout(13000)
+      );
+      return { text, modelUsed: `${gName} (тест)` };
     }
     if (forcedModel === '120b') {
       const text = await callOpenAICompatibleAPI(
@@ -713,6 +717,11 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
         2100
       );
       return { text, modelUsed: 'Groq gpt-oss-120b (тест)' };
+    }
+    if (forcedModel === 'cf70b') {
+      if (!env.AI) throw new Error('Не добавлен Binding Workers AI (имя: AI)');
+      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B (тест)' };
     }
     if (forcedModel === 'cf120b') {
       if (!env.AI) throw new Error('Не добавлен Binding Workers AI (имя: AI)');
@@ -733,32 +742,30 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
       );
       return { text, modelUsed: 'Mistral small-latest (тест)' };
     }
-    if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
-      const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
-      const text = await callGeminiSingleModel(
-        env.GEMINI_API_KEY,
-        gName,
-        fullSystemPrompt,
-        userPromptText,
-        null,
-        getTimeout(13000)
-      );
-      return { text, modelUsed: `${gName} (тест)` };
+  }
+
+  // 1. ГЛАВНЫЕ МОДЕЛИ: Google Gemini 3.5 Flash-Lite / 3.6 Flash (дали лучшие оценки 8.8-9.3/10!)
+  if (env.GEMINI_API_KEY) {
+    for (const model of GEMINI_MODELS) {
+      if (Date.now() > deadline - 8000) break;
+      try {
+        const text = await callGeminiSingleModel(
+          env.GEMINI_API_KEY,
+          model,
+          fullSystemPrompt,
+          userPromptText,
+          null,
+          getTimeout(6500)
+        );
+        return { text, modelUsed: model };
+      } catch (err) {
+        console.warn(`Gemini (${model}) failed:`, err.message);
+        errors.push(`${model}: ${err.message}`);
+      }
     }
   }
 
-  // 1. ГЛАВНАЯ МОДЕЛЬ: Cloudflare AI Llama-3.3-70B (самая честная и сбалансированная!)
-  if (env.AI && Date.now() < deadline - 3000) {
-    try {
-      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
-      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B' };
-    } catch (err) {
-      console.warn('CF Llama 70B failed:', err.message);
-      errors.push(`CF70B: ${err.message}`);
-    }
-  }
-
-  // 2. ЗАПАСНАЯ №1: Groq openai/gpt-oss-120b
+  // 2. ЗАПАСНАЯ №1: Groq openai/gpt-oss-120b (моментально подхватывает вечером при 503 у Google!)
   if (env.GROQ_API_KEY && Date.now() < deadline - 2500) {
     try {
       const text = await callOpenAICompatibleAPI(
@@ -768,7 +775,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(8500),
+        getTimeout(8000),
         2100
       );
       return { text, modelUsed: 'Groq gpt-oss-120b' };
@@ -778,24 +785,14 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
     }
   }
 
-  // 3. ЗАПАСНАЯ №2: Google Gemini
-  if (env.GEMINI_API_KEY) {
-    for (const model of GEMINI_MODELS) {
-      if (Date.now() > deadline - 2500) break;
-      try {
-        const text = await callGeminiSingleModel(
-          env.GEMINI_API_KEY,
-          model,
-          fullSystemPrompt,
-          userPromptText,
-          null,
-          getTimeout(7000)
-        );
-        return { text, modelUsed: model };
-      } catch (err) {
-        console.warn(`Gemini (${model}) failed:`, err.message);
-        errors.push(`${model}: ${err.message}`);
-      }
+  // 3. ЗАПАСНАЯ №2: Cloudflare AI Llama-3.3-70B (резерв внутри Cloudflare)
+  if (env.AI && Date.now() < deadline - 3000) {
+    try {
+      const text = await callCloudflareLlama70B(env.AI, fullSystemPrompt, userPromptText);
+      return { text, modelUsed: 'Cloudflare AI Llama-3.3-70B' };
+    } catch (err) {
+      console.warn('CF Llama 70B failed:', err.message);
+      errors.push(`CF70B: ${err.message}`);
     }
   }
 
@@ -809,7 +806,7 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
         fullSystemPrompt,
         userPromptText,
         null,
-        getTimeout(9000),
+        getTimeout(8000),
         2100
       );
       return { text, modelUsed: 'Mistral small-latest' };
@@ -913,6 +910,7 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
       temperature: 0.3,
+      thinkingConfig: { thinkingLevel: 'minimal' },
     },
   };
 
