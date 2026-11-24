@@ -3,7 +3,7 @@ import { KNOWLEDGE_BASE } from './knowledge_base.js';
 
 const GEMINI_MODELS = [
   'gemini-3.5-flash-lite',
-  'gemini-3.6-flash',
+  'gemini-4-hydrogen',
 ];
 
 export default {
@@ -331,11 +331,11 @@ async function processHardwareAnalysis(message, user, env) {
   }
 
   // Секретные админ-теги для проверки качества моделей:
-  // #test_120b, #test_cf120b, #test_cf70b, #test_mistral, #test_gemini35, #test_gemini36
+  // #test_120b, #test_cf120b, #test_cf70b, #test_mistral, #test_gemini35, #test_gemini4
   let forcedModel = '';
   if (isAdmin && rawTextInput) {
     const tagMatch = rawTextInput.match(
-      /#test_(120b|cf120b|cf70b|mistral|gemini35|gemini36)\b/i
+      /#test_(120b|cf120b|cf70b|mistral|gemini35|gemini4)\b/i
     );
     if (tagMatch) {
       forcedModel = tagMatch[1].toLowerCase();
@@ -343,7 +343,7 @@ async function processHardwareAnalysis(message, user, env) {
   }
   const textInput = forcedModel
     ? rawTextInput
-        .replace(/#test_(120b|cf120b|cf70b|mistral|gemini35|gemini36)\b/gi, '')
+        .replace(/#test_(120b|cf120b|cf70b|mistral|gemini35|gemini4)\b/gi, '')
         .trim()
     : rawTextInput;
 
@@ -764,8 +764,8 @@ async function generateFinalAnalysis(env, userPromptText, deadline, forcedModel 
       );
       return { text, modelUsed: 'Mistral small-latest (тест)' };
     }
-    if (forcedModel === 'gemini35' || forcedModel === 'gemini36') {
-      const gName = forcedModel === 'gemini36' ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
+    if (forcedModel === 'gemini35' || forcedModel === 'gemini4') {
+      const gName = forcedModel === 'gemini4' ? 'gemini-4-hydrogen' : 'gemini-3.5-flash-lite';
       const text = await callGeminiSingleModel(
         env.GEMINI_API_KEY,
         gName,
@@ -944,9 +944,9 @@ async function callGeminiSingleModel(apiKey, model, systemText, userPromptText, 
     systemInstruction: { parts: [{ text: systemText }] },
     contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
-      temperature: 0.3,
+      ...(model.includes('gemini-4') ? {} : { temperature: 0.3 }),
       thinkingConfig: {
-        thinkingLevel: model.includes('3.8') ? 'low' : 'minimal',
+        thinkingLevel: model.includes('3.5') ? 'minimal' : 'low',
       },
     },
   };
