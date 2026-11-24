@@ -15,7 +15,7 @@ export const KNOWLEDGE_BASE = `
    - AMD Ryzen 7x20 (7320U / 7520U): старая архитектура Zen 2 под новым именем, слабые для тяжёлых задач.
    - НОВЫЙ НЕЙМИНГ AMD (2025–2026): серии AMD Ryzen 200 (Ryzen 5 220, Ryzen 7 250, Ryzen 7 260, Ryzen 9 270) и Ryzen AI 300 (Ryzen AI 5 340, Ryzen AI 7 350, Ryzen AI 9 365) — это ПОЛНЫЕ официальные названия БЕЗ суффиксов HS/U/HX (Ryzen 7 260 = 8C/16T Zen 4, аналог 8845HS). Не считай это сокращением.
    - НОВЫЙ НЕЙМИНГ INTEL (2024–2026): Intel убрал букву «i» — Core 100/200 (Core 5 120U/210H, Core 7 240H) и Core Ultra Series 2 (225H/255H/285HX). У Intel 10/11-го поколений НЕТ E-ядер.
-4. ЧЁРНЫЙ СПИСОК (УДАЧНЫЕ И ПРОБЛЕМНЫЕ СЕРИИ — НЕ СОВЕТОВАТЬ ПРОБЛЕМНЫЕ В АЛЬТЕРНАТИВЫ!):
+4. ЧЁРНЫЙ СПИСОК И ИЗВЕСТНЫЕ РИСКИ СЕРИЙ:
    - ПЛОХИЕ / УРЕЗАННЫЕ МОДЕЛИ (НИКОГДА не рекомендуй их в разделе «Альтернатива»!): MSI GF63 / MSI Thin 15 / MSI Cyborg 15 (один вентилятор, шум, троттлинг, урезанная GPU до 45 Вт, слабые петли крышки).
    - Lenovo LOQ (ранние ревизии 2023–2024 на Intel 13/14 HX): встречались проблемы по питанию платы — брать с гарантией.
    - ASUS TUF (2021–2023): Wi-Fi модуль MediaTek MT7921 под горячим SSD может отваливаться под нагрузкой.
@@ -40,6 +40,6 @@ export const KNOWLEDGE_BASE = `
 
 --- 4. ОРИЕНТИР ПО АЛЬТЕРНАТИВАМ (БЕЗ ПРИВЯЗКИ К ЦЕНАМ) ---
 - Для учёбы/работы: линейки Lenovo IdeaPad Slim / ThinkBook, ASUS Vivobook (с IPS 300+ нит), Acer Aspire, HP ProBook; среди б/у — корпоративные ThinkPad, Latitude, EliteBook.
-- Для игр/монтажа: смотреть на честный TGP GPU (100W+) и экран 100% sRGB в линейках Lenovo LOQ (индексы 15AHP9/15ARP9/15IRX10), Lenovo Legion 5 / Pro 5, ASUS TUF Gaming (FA607 для RTX 40, FA608 для RTX 50), HP Victus 16, Acer Nitro 16; для Mac — строго от 16 ГБ ОЗУ.
+- Для игр/монтажа: смотреть на честный TGP GPU (100W+) и экран 100% sRGB в линейках Lenovo LOQ, Lenovo Legion 5 / Pro 5, ASUS TUF Gaming (A15 / F15 / A16), HP Victus 16, Acer Nitro 16; для Mac — строго от 16 ГБ ОЗУ.
 - Для смартфонов: смотреть на UFS 3.1+, OIS и глобальную прошивку среди актуальных линеек Samsung Galaxy A/S, Poco X/F, Google Pixel, Nothing, Motorola, iPhone.
 `;
